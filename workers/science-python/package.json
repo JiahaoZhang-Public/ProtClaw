@@ -1,0 +1,12 @@
+{
+  "name": "@protclaw/science-python",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Python science execution plane - tool adapters and Docker images for protein design tools",
+  "scripts": {
+    "build": "echo 'Python package - use pip install -e . for development'",
+    "test": "python -m pytest tests/ -v",
+    "lint": "ruff check .",
+    "codegen": "echo 'no codegen needed'"
+  }
+}

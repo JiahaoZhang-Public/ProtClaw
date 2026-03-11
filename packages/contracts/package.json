@@ -1,0 +1,21 @@
+{
+  "name": "@protclaw/contracts",
+  "version": "0.1.0",
+  "description": "Shared domain contracts for ProtClaw - JSON Schema source of truth with TS/Python codegen",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "codegen": "echo 'codegen not yet implemented'",
+    "codegen:check": "echo 'codegen:check not yet implemented'",
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "echo 'no tests yet'"
+  },
+  "dependencies": {
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0"
+  }
+}

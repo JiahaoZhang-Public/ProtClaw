@@ -1,0 +1,15 @@
+# Base image for ProtClaw science workers (CPU-only tools)
+FROM python:3.10-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install common Python dependencies
+COPY workers/science-python/common /opt/protclaw/common
+RUN pip install --no-cache-dir numpy biopython
+
+# Set up workspace directories
+RUN mkdir -p /workspace/input/files /workspace/output/files
+
+WORKDIR /opt/protclaw
