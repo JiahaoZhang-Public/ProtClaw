@@ -83,6 +83,16 @@ function initTestDb(): Database.Database {
     );
     CREATE INDEX IF NOT EXISTS idx_experiment_feedback_project_id ON experiment_feedback(project_id);
     CREATE INDEX IF NOT EXISTS idx_experiment_feedback_candidate_id ON experiment_feedback(candidate_id);
+
+    CREATE TABLE IF NOT EXISTS learning_updates (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL,
+      source_feedback_refs TEXT NOT NULL DEFAULT '[]',
+      update_data TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (project_id) REFERENCES projects(id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_learning_updates_project_id ON learning_updates(project_id);
   `);
   return database;
 }
@@ -439,5 +449,74 @@ describe('ProjectManager - feedback', () => {
     const filtered = pm.getFeedback('proj-fb', 'cand-1');
     expect(filtered).toHaveLength(1);
     expect(filtered[0].id).toBe('fb-a');
+  });
+});
+
+// --- Learning Updates ---
+
+describe('ProjectManager - learning updates', () => {
+  beforeEach(() => {
+    pm.createProject('proj-lu', 'Learning Test', {});
+  });
+
+  it('records and retrieves learning updates', () => {
+    pm.recordLearningUpdate({
+      id: 'lu-1',
+      project_id: 'proj-lu',
+      source_feedback_refs: ['fb-1', 'fb-2'],
+      update_data: { success_rate: 0.5, parameter_adjustments: [] },
+    });
+
+    const updates = pm.getLearningUpdates('proj-lu');
+    expect(updates).toHaveLength(1);
+    expect(updates[0].source_feedback_refs).toEqual(['fb-1', 'fb-2']);
+    expect(updates[0].update_data).toEqual({ success_rate: 0.5, parameter_adjustments: [] });
+  });
+
+  it('returns updates ordered by created_at DESC', () => {
+    pm.recordLearningUpdate({
+      id: 'lu-a',
+      project_id: 'proj-lu',
+      source_feedback_refs: ['fb-1'],
+      update_data: { v: 1 },
+      created_at: '2024-01-01T00:00:00Z',
+    });
+    pm.recordLearningUpdate({
+      id: 'lu-b',
+      project_id: 'proj-lu',
+      source_feedback_refs: ['fb-2'],
+      update_data: { v: 2 },
+      created_at: '2024-01-02T00:00:00Z',
+    });
+
+    const updates = pm.getLearningUpdates('proj-lu');
+    expect(updates).toHaveLength(2);
+    expect(updates[0].id).toBe('lu-b'); // most recent first
+    expect(updates[1].id).toBe('lu-a');
+  });
+});
+
+// --- Plan Status ---
+
+describe('ProjectManager - updatePlanStatus', () => {
+  beforeEach(() => {
+    pm.createProject('proj-ps', 'Plan Status Test', {});
+  });
+
+  it('updates plan status to superseded', () => {
+    pm.createPlan('plan-1', 'proj-ps', { operations: [] });
+    pm.updatePlanStatus('plan-1', 'superseded');
+
+    const plan = pm.getPlan('plan-1');
+    expect(plan).toBeDefined();
+    expect(plan!.status).toBe('superseded');
+  });
+
+  it('updates plan status to completed', () => {
+    pm.createPlan('plan-2', 'proj-ps', { operations: [] });
+    pm.updatePlanStatus('plan-2', 'completed');
+
+    const plan = pm.getPlan('plan-2');
+    expect(plan!.status).toBe('completed');
   });
 });
