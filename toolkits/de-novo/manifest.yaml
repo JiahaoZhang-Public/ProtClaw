@@ -1,0 +1,212 @@
+# De Novo Protein Design Toolkit Manifest
+# This toolkit defines the golden path for de novo protein design.
+#
+# V1 operations: backbone_generate -> sequence_design -> structure_predict
+#   -> structure_qc -> developability_check -> candidate_cluster
+#   -> candidate_rank -> experiment_package
+
+name: de-novo-design
+version: "0.1.0"
+description: "De novo protein backbone and sequence design toolkit"
+task_types:
+  - de_novo_design
+  - binder_design
+
+operations:
+  backbone_generate:
+    tool: rfdiffusion
+    description: "Generate protein backbones using RFdiffusion"
+    docker_image: protclaw/rfdiffusion:latest
+    gpu_required: true
+    inputs:
+      contigs:
+        type: string
+        description: "Contig specification for backbone generation"
+        required: true
+      num_designs:
+        type: integer
+        default: 10
+        description: "Number of backbone designs to generate"
+      pdb_template:
+        type: file
+        format: pdb
+        required: false
+        description: "Optional template PDB for constrained generation"
+    outputs:
+      backbones:
+        type: file_list
+        format: pdb
+      scores:
+        type: json
+    planner_hints:
+      typical_runtime: "5-30 minutes per design"
+      cost_tier: balanced
+
+  sequence_design:
+    tool: proteinmpnn
+    description: "Design sequences for given backbones using ProteinMPNN"
+    docker_image: protclaw/proteinmpnn:latest
+    gpu_required: true
+    depends_on:
+      - backbone_generate
+    inputs:
+      backbone_pdb:
+        type: file
+        format: pdb
+        required: true
+      num_sequences:
+        type: integer
+        default: 8
+      temperature:
+        type: float
+        default: 0.1
+      fixed_positions:
+        type: string
+        required: false
+    outputs:
+      sequences:
+        type: file
+        format: fasta
+      scores:
+        type: json
+    planner_hints:
+      typical_runtime: "1-5 minutes per backbone"
+      cost_tier: fast
+
+  structure_predict:
+    tool: esmfold
+    description: "Predict 3D structure from sequence using ESMFold"
+    docker_image: protclaw/esmfold:latest
+    gpu_required: true
+    depends_on:
+      - sequence_design
+    inputs:
+      sequence:
+        type: string
+        format: amino_acid
+        required: true
+    outputs:
+      predicted_pdb:
+        type: file
+        format: pdb
+      plddt_scores:
+        type: json
+      ptm_score:
+        type: float
+    planner_hints:
+      typical_runtime: "1-10 minutes per sequence"
+      cost_tier: balanced
+
+  structure_qc:
+    tool: structure-qc
+    description: "Assess structural quality (RMSD, clashes, Ramachandran)"
+    docker_image: protclaw/structure-qc:latest
+    gpu_required: false
+    depends_on:
+      - structure_predict
+    inputs:
+      predicted_pdb:
+        type: file
+        format: pdb
+        required: true
+      template_pdb:
+        type: file
+        format: pdb
+        required: false
+    outputs:
+      qc_report:
+        type: json
+    planner_hints:
+      typical_runtime: "< 1 minute"
+      cost_tier: fast
+
+  developability_check:
+    tool: developability
+    description: "Check solubility, aggregation risk, expression host compatibility"
+    docker_image: protclaw/developability:latest
+    gpu_required: false
+    depends_on:
+      - structure_predict
+    inputs:
+      sequence:
+        type: string
+        format: amino_acid
+        required: true
+      predicted_pdb:
+        type: file
+        format: pdb
+        required: false
+    outputs:
+      developability_report:
+        type: json
+    planner_hints:
+      typical_runtime: "< 1 minute"
+      cost_tier: fast
+
+  candidate_cluster:
+    tool: candidate-ops
+    description: "Cluster candidates for diversity and de-duplication"
+    docker_image: protclaw/candidate-ops:latest
+    gpu_required: false
+    depends_on:
+      - structure_qc
+      - developability_check
+    inputs:
+      candidates:
+        type: json
+        description: "List of candidate IDs with sequences/structures"
+        required: true
+    outputs:
+      clusters:
+        type: json
+    planner_hints:
+      typical_runtime: "< 1 minute"
+      cost_tier: fast
+
+  candidate_rank:
+    tool: candidate-ops
+    description: "Evidence-driven multi-objective ranking (Pareto)"
+    docker_image: protclaw/candidate-ops:latest
+    gpu_required: false
+    depends_on:
+      - candidate_cluster
+    inputs:
+      candidates:
+        type: json
+        required: true
+      ranking_criteria:
+        type: json
+        required: false
+    outputs:
+      ranked_candidates:
+        type: json
+    planner_hints:
+      typical_runtime: "< 1 minute"
+      cost_tier: fast
+
+  experiment_package:
+    tool: experiment-package
+    description: "Generate experiment-ready candidate cards with assay recommendations"
+    docker_image: protclaw/experiment-package:latest
+    gpu_required: false
+    depends_on:
+      - candidate_rank
+    inputs:
+      selected_candidates:
+        type: json
+        required: true
+      project_metadata:
+        type: json
+        required: true
+    outputs:
+      candidate_cards:
+        type: json
+      order_sheet:
+        type: file
+        format: csv
+      documentation:
+        type: file
+        format: html
+    planner_hints:
+      typical_runtime: "< 1 minute"
+      cost_tier: fast

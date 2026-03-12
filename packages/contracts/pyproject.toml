@@ -1,0 +1,19 @@
+[build-system]
+requires = ["flit_core>=3.2,<4"]
+build-backend = "flit_core.buildapi"
+
+[project]
+name = "protclaw-contracts"
+version = "0.1.0"
+description = "Shared domain contracts for ProtClaw - Pydantic v2 models from JSON Schema"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+dependencies = [
+    "pydantic>=2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "datamodel-code-generator>=0.25.0",
+    "pytest>=7.0",
+]
