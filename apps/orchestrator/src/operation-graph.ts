@@ -207,6 +207,13 @@ export class OperationGraph {
   }
 
   /**
+   * Get the op IDs of all direct dependents of the given operation.
+   */
+  getDependents(opId: string): string[] {
+    return [...(this.dependents.get(opId) ?? [])];
+  }
+
+  /**
    * Get a topological ordering of all operations.
    */
   topologicalOrder(): string[] {
