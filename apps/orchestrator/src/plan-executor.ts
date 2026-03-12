@@ -2,13 +2,14 @@
  * Plan Executor for ProtClaw
  *
  * Orchestrates a DesignPlan end-to-end: builds operation graph, checks cache,
- * submits runs to the science queue, records artifacts, and applies fallback policies.
+ * submits runs to the science queue, records artifacts, routes files between
+ * operations, and builds candidate cards from results.
  */
 
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import type { DesignPlan } from '@protclaw/contracts';
+import type { CandidateCard, DesignPlan } from '@protclaw/contracts';
 import { DesignPlanSchema } from '@protclaw/contracts';
 import { OperationGraph } from './operation-graph.js';
 import type { OperationNode } from './operation-graph.js';
@@ -17,6 +18,8 @@ import type { ScienceCache } from './science-cache.js';
 import type { ScienceQueue } from './science-queue.js';
 import type { ScienceRunConfig, ScienceRunResult } from './science-runner.js';
 import type { ProjectManager } from './project-manager.js';
+import type { FileRouter } from './file-router.js';
+import type { CandidateCardBuilder } from './candidate-card-builder.js';
 
 export interface PlanExecutionResult {
   planId: string;
@@ -25,6 +28,8 @@ export interface PlanExecutionResult {
   failedOps: string[];
   skippedOps: string[];
   artifacts: Record<string, string>; // opId → artifactId
+  opToolkitOps?: Record<string, string>; // opId → toolkitOp name
+  candidates?: CandidateCard[];
 }
 
 export interface PlanExecutorConfig {
@@ -33,6 +38,8 @@ export interface PlanExecutorConfig {
   scienceCache: ScienceCache;
   toolkitLoader: ToolkitLoader;
   projectDir: string;
+  fileRouter?: FileRouter;
+  cardBuilder?: CandidateCardBuilder;
 }
 
 export class PlanExecutor {
@@ -41,6 +48,8 @@ export class PlanExecutor {
   private cache: ScienceCache;
   private toolkits: ToolkitLoader;
   private projectDir: string;
+  private fileRouter?: FileRouter;
+  private cardBuilder?: CandidateCardBuilder;
 
   constructor(config: PlanExecutorConfig) {
     this.pm = config.projectManager;
@@ -48,6 +57,8 @@ export class PlanExecutor {
     this.cache = config.scienceCache;
     this.toolkits = config.toolkitLoader;
     this.projectDir = config.projectDir;
+    this.fileRouter = config.fileRouter;
+    this.cardBuilder = config.cardBuilder;
   }
 
   async execute(projectId: string, planId: string): Promise<PlanExecutionResult> {
@@ -67,9 +78,15 @@ export class PlanExecutor {
 
     // Track results
     const artifacts: Record<string, string> = {};
+    const opToolkitOps: Record<string, string> = {};
     const completedOps: string[] = [];
     const failedOps: string[] = [];
     const skippedOps: string[] = [];
+
+    // Record toolkit op mappings
+    for (const node of graph.getAllNodes()) {
+      opToolkitOps[node.opId] = node.toolkitOp;
+    }
 
     // 4. Execution loop
     while (!graph.isComplete()) {
@@ -101,6 +118,15 @@ export class PlanExecutor {
           completedOps.push(node.opId);
           if (result.value.artifactId) {
             artifacts[node.opId] = result.value.artifactId;
+          }
+
+          // Route output files to downstream operations
+          if (this.fileRouter) {
+            const outputDir = this.getOutputDir(projectId, planId, node.opId);
+            this.fileRouter.routeForCompletedOp(
+              node.opId, outputDir, graph,
+              this.projectDir, projectId, planId,
+            );
           }
         } else {
           const error = result.status === 'rejected'
@@ -135,7 +161,18 @@ export class PlanExecutor {
         ? 'partial'
         : 'failed';
 
-    return { planId, status, completedOps, failedOps, skippedOps, artifacts };
+    const executionResult: PlanExecutionResult = {
+      planId, status, completedOps, failedOps, skippedOps, artifacts, opToolkitOps,
+    };
+
+    // Build candidate cards from completed pipeline
+    if (this.cardBuilder && status === 'completed') {
+      executionResult.candidates = this.cardBuilder.buildCards(
+        projectId, planId, executionResult, this.projectDir,
+      );
+    }
+
+    return executionResult;
   }
 
   private async executeOperation(
@@ -148,15 +185,16 @@ export class PlanExecutor {
     graph.markRunning(node.opId);
 
     // Check cache
-    const cacheKey = this.computeOpCacheKey(node);
+    const cacheKey = this.computeOpCacheKey(node, projectId, planId);
     if (this.cache.has(cacheKey)) {
       const cachedResult = await this.cache.get(cacheKey);
       const artifactId = this.generateId('art');
 
-      // Restore cached output files
+      // Restore cached output files into the files/ subdirectory
       const outputDir = this.getOutputDir(projectId, planId, node.opId);
-      fs.mkdirSync(outputDir, { recursive: true });
-      await this.cache.restoreOutputFiles(cacheKey, outputDir);
+      const outputFilesDir = path.join(outputDir, 'files');
+      fs.mkdirSync(outputFilesDir, { recursive: true });
+      await this.cache.restoreOutputFiles(cacheKey, outputFilesDir);
 
       this.pm.recordArtifact({
         id: artifactId,
@@ -280,12 +318,34 @@ export class PlanExecutor {
     return false;
   }
 
-  private computeOpCacheKey(node: OperationNode): string {
+  /**
+   * Compute a deterministic cache key for an operation.
+   * Includes toolkit op, docker image, tool override, params, and input file hashes.
+   */
+  private computeOpCacheKey(node: OperationNode, projectId?: string, planId?: string): string {
     const hasher = crypto.createHash('sha256');
     hasher.update(node.toolkitOp);
     hasher.update(node.dockerImage);
     if (node.toolOverride) hasher.update(node.toolOverride);
     hasher.update(JSON.stringify(node.params, Object.keys(node.params).sort()));
+
+    // Include input file hashes for deterministic caching across different upstream runs
+    if (projectId && planId) {
+      const inputFilesDir = path.join(this.projectDir, projectId, 'runs', planId, node.opId, 'input', 'files');
+      if (fs.existsSync(inputFilesDir)) {
+        const files = fs.readdirSync(inputFilesDir).sort();
+        for (const file of files) {
+          const filePath = path.join(inputFilesDir, file);
+          const stat = fs.statSync(filePath);
+          if (stat.isFile()) {
+            const content = fs.readFileSync(filePath);
+            hasher.update(file);
+            hasher.update(content);
+          }
+        }
+      }
+    }
+
     return hasher.digest('hex');
   }
 
