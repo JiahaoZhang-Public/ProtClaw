@@ -5,11 +5,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Install common Python dependencies
-COPY workers/science-python/common /opt/protclaw/common
-RUN pip install --no-cache-dir numpy biopython
+WORKDIR /app
+
+# Install common science dependencies
+RUN pip install --no-cache-dir \
+    numpy>=1.24 \
+    biopython>=1.81 \
+    scipy>=1.11
+
+# Copy common worker code
+COPY common/ /app/common/
 
 # Set up workspace directories
 RUN mkdir -p /workspace/input/files /workspace/output/files
 
-WORKDIR /opt/protclaw
+ENTRYPOINT ["python", "-m", "common.entrypoint"]

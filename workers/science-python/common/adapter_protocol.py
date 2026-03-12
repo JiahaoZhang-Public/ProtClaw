@@ -1,14 +1,22 @@
 """
-Standard tool adapter protocol for ProtClaw science workers.
+Tool Adapter Protocol for ProtClaw science workers.
 
 Every science tool adapter must implement the ToolAdapter protocol.
 This ensures consistent input validation, cache key computation,
 and execution interface across all tools (RFdiffusion, ProteinMPNN, ESMFold, etc.).
+
+BaseTool provides default implementations for common operations like
+deterministic cache key computation and ToolResult construction.
 """
 
 from __future__ import annotations
 
-from typing import Any, Protocol
+import hashlib
+import json
+import os
+import time
+from abc import ABC, abstractmethod
+from typing import Any, Protocol, runtime_checkable
 
 
 class ToolResult:
@@ -21,21 +29,35 @@ class ToolResult:
         output_files: list[str],
         metrics: dict[str, Any],
         errors: list[str] | None = None,
+        tool_name: str = "",
+        tool_version: str = "",
+        duration_seconds: float = 0.0,
+        cache_key: str = "",
     ):
         self.status = status  # "success" | "failed" | "partial"
         self.output_files = output_files
         self.metrics = metrics
         self.errors = errors or []
+        self.tool_name = tool_name
+        self.tool_version = tool_version
+        self.duration_seconds = duration_seconds
+        self.cache_key = cache_key
 
     def to_dict(self) -> dict[str, Any]:
+        """Serialize result to a JSON-compatible dict."""
         return {
             "status": self.status,
             "output_files": self.output_files,
             "metrics": self.metrics,
             "errors": self.errors,
+            "tool_name": self.tool_name,
+            "tool_version": self.tool_version,
+            "duration_seconds": self.duration_seconds,
+            "cache_key": self.cache_key,
         }
 
 
+@runtime_checkable
 class ToolAdapter(Protocol):
     """Protocol that all science tool adapters must implement."""
 
@@ -43,13 +65,101 @@ class ToolAdapter(Protocol):
     tool_version: str
 
     def validate_input(self, params: dict[str, Any]) -> dict[str, Any]:
-        """Validate and normalize input parameters. Raises ValueError on invalid."""
+        """Validate and normalize input parameters. Raise ValueError on invalid input."""
         ...
 
     def compute_cache_key(self, params: dict[str, Any], input_files: list[str]) -> str:
-        """Compute deterministic cache key from normalized inputs."""
+        """Compute deterministic cache key for this execution."""
         ...
 
     def execute(self, params: dict[str, Any], input_dir: str, output_dir: str) -> ToolResult:
-        """Run the tool. Read from input_dir, write results to output_dir."""
+        """Execute the tool. Returns a ToolResult instance."""
         ...
+
+
+class BaseTool(ABC):
+    """Abstract base class providing default implementations for ToolAdapter.
+
+    Subclasses must define tool_name, tool_version, and implement validate_input
+    and execute. compute_cache_key has a sensible default based on SHA256.
+    """
+
+    tool_name: str
+    tool_version: str
+
+    def compute_cache_key(self, params: dict[str, Any], input_files: list[str]) -> str:
+        """Compute a deterministic SHA256 cache key from sorted params + file checksums.
+
+        The key is composed of:
+        - tool_name and tool_version
+        - Sorted JSON serialization of params (excluding internal keys starting with '_')
+        - SHA256 checksums of each input file (sorted by filename)
+        """
+        hasher = hashlib.sha256()
+
+        # Include tool identity
+        hasher.update(f"{self.tool_name}:{self.tool_version}".encode())
+
+        # Include sorted params (exclude internal keys starting with '_')
+        filtered_params = {k: v for k, v in params.items() if not k.startswith("_")}
+        params_json = json.dumps(filtered_params, sort_keys=True, default=str)
+        hasher.update(params_json.encode())
+
+        # Include file checksums sorted by filename
+        for filepath in sorted(input_files):
+            if os.path.isfile(filepath):
+                file_hash = hashlib.sha256()
+                with open(filepath, "rb") as f:
+                    for chunk in iter(lambda: f.read(8192), b""):
+                        file_hash.update(chunk)
+                hasher.update(f"{os.path.basename(filepath)}:{file_hash.hexdigest()}".encode())
+
+        return hasher.hexdigest()
+
+    @abstractmethod
+    def validate_input(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Validate and normalize input parameters. Raise ValueError on invalid input."""
+        ...
+
+    @abstractmethod
+    def execute(self, params: dict[str, Any], input_dir: str, output_dir: str) -> ToolResult:
+        """Execute the tool. Returns a ToolResult instance."""
+        ...
+
+    def build_result(
+        self,
+        *,
+        status: str,
+        output_files: list[str] | None = None,
+        metrics: dict[str, Any] | None = None,
+        errors: list[str] | None = None,
+        duration_seconds: float = 0.0,
+        cache_key: str = "",
+    ) -> ToolResult:
+        """Helper to construct a ToolResult with tool identity pre-filled."""
+        return ToolResult(
+            status=status,
+            output_files=output_files or [],
+            metrics=metrics or {},
+            errors=errors,
+            tool_name=self.tool_name,
+            tool_version=self.tool_version,
+            duration_seconds=duration_seconds,
+            cache_key=cache_key,
+        )
+
+    def build_error_result(self, error_message: str) -> ToolResult:
+        """Helper to construct a failed ToolResult from an error message."""
+        return self.build_result(
+            status="failed",
+            errors=[error_message],
+        )
+
+    def timed_execute(
+        self, params: dict[str, Any], input_dir: str, output_dir: str
+    ) -> ToolResult:
+        """Wrapper around execute that records wall-clock duration."""
+        start = time.monotonic()
+        result = self.execute(params, input_dir, output_dir)
+        result.duration_seconds = time.monotonic() - start
+        return result
