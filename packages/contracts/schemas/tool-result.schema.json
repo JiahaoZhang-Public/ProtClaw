@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "protclaw://contracts/tool-result/v1",
+  "title": "ToolResult",
+  "description": "Standardized envelope for all tool adapter outputs. Written by Python workers to /workspace/output/result.json.",
+  "type": "object",
+  "required": ["status", "tool_name", "tool_version"],
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["success", "failed", "partial"]
+    },
+    "tool_name": { "type": "string" },
+    "tool_version": { "type": "string" },
+    "output_files": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["path", "type"],
+        "properties": {
+          "path": { "type": "string", "description": "Relative path within /workspace/output/files/" },
+          "type": { "type": "string" },
+          "size_bytes": { "type": "integer" },
+          "checksum_sha256": { "type": "string" }
+        }
+      },
+      "default": []
+    },
+    "metrics": {
+      "type": "object",
+      "description": "Tool-specific output metrics"
+    },
+    "errors": {
+      "type": "array",
+      "items": { "type": "string" },
+      "default": []
+    },
+    "warnings": {
+      "type": "array",
+      "items": { "type": "string" },
+      "default": []
+    },
+    "provenance": {
+      "type": "object",
+      "properties": {
+        "image_digest": { "type": "string" },
+        "model_checkpoint": { "type": "string" },
+        "random_seed": { "type": "integer" },
+        "started_at": { "type": "string", "format": "date-time" },
+        "completed_at": { "type": "string", "format": "date-time" },
+        "duration_seconds": { "type": "number" }
+      }
+    },
+    "cache_key": { "type": "string" }
+  }
+}

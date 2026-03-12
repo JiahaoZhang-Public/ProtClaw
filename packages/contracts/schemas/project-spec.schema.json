@@ -1,0 +1,136 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "protclaw://contracts/project-spec/v1",
+  "title": "ProjectSpec",
+  "description": "Project truth source — design campaign goals, constraints, budget. Generated from user conversation and iteratively updated.",
+  "type": "object",
+  "required": ["project_id", "name", "scientific_objective", "task_type", "success_criteria"],
+  "properties": {
+    "project_id": {
+      "type": "string",
+      "description": "Unique identifier for the project"
+    },
+    "name": {
+      "type": "string",
+      "description": "Human-readable project name"
+    },
+    "scientific_objective": {
+      "type": "string",
+      "description": "Natural language description of the design goal"
+    },
+    "task_type": {
+      "type": "string",
+      "enum": ["de_novo_design", "binder_design", "optimization", "stabilization", "humanization"],
+      "description": "Primary task category"
+    },
+    "input_assets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["asset_type", "path"],
+        "properties": {
+          "asset_type": {
+            "type": "string",
+            "enum": ["pdb", "fasta", "csv", "json", "sdf"]
+          },
+          "path": { "type": "string" },
+          "description": { "type": "string" }
+        }
+      },
+      "default": []
+    },
+    "hard_constraints": {
+      "type": "array",
+      "items": { "type": "string" },
+      "default": [],
+      "description": "Constraints that must be satisfied (e.g., 'must bind EGFR', 'no cysteine mutations')"
+    },
+    "soft_preferences": {
+      "type": "array",
+      "items": { "type": "string" },
+      "default": [],
+      "description": "Preferences that should be optimized when possible"
+    },
+    "target_properties": {
+      "type": "object",
+      "properties": {
+        "binding_target": { "type": "string", "description": "Target protein (PDB ID or description)" },
+        "affinity_threshold_nM": { "type": "number", "description": "Desired binding affinity in nM" },
+        "stability_requirements": {
+          "type": "object",
+          "properties": {
+            "tm_min_celsius": { "type": "number" },
+            "aggregation_score_max": { "type": "number" }
+          }
+        },
+        "expression_host": {
+          "type": "string",
+          "enum": ["e_coli", "cho", "yeast", "hek293", "insect", "cell_free"]
+        },
+        "size_range": {
+          "type": "object",
+          "properties": {
+            "min_residues": { "type": "integer" },
+            "max_residues": { "type": "integer" }
+          }
+        }
+      }
+    },
+    "budget": {
+      "type": "object",
+      "properties": {
+        "max_compute_hours": { "type": "number" },
+        "max_candidates": { "type": "integer" },
+        "cost_tier": {
+          "type": "string",
+          "enum": ["fast", "balanced", "accurate"],
+          "default": "balanced"
+        }
+      }
+    },
+    "timeline": {
+      "type": "object",
+      "properties": {
+        "deadline": { "type": "string", "format": "date-time" },
+        "priority": { "type": "string", "enum": ["low", "normal", "high", "urgent"] }
+      }
+    },
+    "allowed_methods": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "If specified, only these tools/methods may be used"
+    },
+    "forbidden_methods": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "These tools/methods must not be used"
+    },
+    "success_criteria": {
+      "type": "array",
+      "items": { "type": "string" },
+      "minItems": 1,
+      "description": "Measurable criteria for project success"
+    },
+    "output_expectations": {
+      "type": "object",
+      "properties": {
+        "min_candidates": { "type": "integer", "default": 5 },
+        "diversity_required": { "type": "boolean", "default": true },
+        "include_controls": { "type": "boolean", "default": true },
+        "output_formats": {
+          "type": "array",
+          "items": { "type": "string", "enum": ["candidate_cards", "order_sheet", "report"] }
+        }
+      }
+    },
+    "dbtl_config": {
+      "type": "object",
+      "properties": {
+        "max_cycles": { "type": "integer", "default": 1 },
+        "auto_replan": { "type": "boolean", "default": false }
+      }
+    },
+    "created_at": { "type": "string", "format": "date-time" },
+    "updated_at": { "type": "string", "format": "date-time" }
+  }
+}

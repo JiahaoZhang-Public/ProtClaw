@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "protclaw://contracts/candidate-card/v1",
+  "title": "CandidateCard",
+  "description": "Final deliverable per candidate protein — not just a score, but a complete dossier for the scientist.",
+  "type": "object",
+  "required": ["candidate_id", "project_id", "sequence", "status"],
+  "properties": {
+    "candidate_id": { "type": "string" },
+    "project_id": { "type": "string" },
+    "sequence": { "type": "string", "description": "Amino acid sequence" },
+    "structure_refs": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Paths to PDB structure files"
+    },
+    "design_lineage": {
+      "type": "object",
+      "properties": {
+        "backbone_artifact_id": { "type": "string" },
+        "sequence_artifact_id": { "type": "string" },
+        "structure_artifact_id": { "type": "string" },
+        "parent_candidate_id": { "type": "string", "description": "Parent candidate if this is a replan iteration" }
+      },
+      "description": "Trace back to the artifacts that produced this candidate"
+    },
+    "scores": {
+      "type": "object",
+      "properties": {
+        "plddt": { "type": "number" },
+        "ptm": { "type": "number" },
+        "rmsd_to_design": { "type": "number" },
+        "sequence_recovery": { "type": "number" },
+        "binding_energy": { "type": "number" },
+        "solubility_score": { "type": "number" },
+        "aggregation_score": { "type": "number" },
+        "tm_predicted_celsius": { "type": "number" },
+        "composite_score": { "type": "number" }
+      }
+    },
+    "constraint_satisfaction_summary": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["constraint", "satisfied"],
+        "properties": {
+          "constraint": { "type": "string" },
+          "satisfied": { "type": "boolean" },
+          "details": { "type": "string" }
+        }
+      }
+    },
+    "key_mutation_or_motif_rationale": {
+      "type": "string",
+      "description": "Why this design is interesting — key mutations, motifs, or structural features"
+    },
+    "risk_flags": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Known risks (e.g., 'contains unpaired cysteine', 'low pLDDT in loop region')"
+    },
+    "diversity_cluster": {
+      "type": "string",
+      "description": "Cluster ID for diversity tracking"
+    },
+    "recommended_assays": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Suggested experimental assays for this candidate"
+    },
+    "recommended_controls": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Suggested positive/negative controls"
+    },
+    "evidence_summary": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Evidence record IDs supporting this candidate"
+    },
+    "rank": { "type": "integer" },
+    "status": {
+      "type": "string",
+      "enum": ["active", "selected", "discarded", "experimental"]
+    },
+    "created_at": { "type": "string", "format": "date-time" },
+    "updated_at": { "type": "string", "format": "date-time" }
+  }
+}

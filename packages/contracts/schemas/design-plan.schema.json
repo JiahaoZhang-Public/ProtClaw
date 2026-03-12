@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "protclaw://contracts/design-plan/v1",
+  "title": "DesignPlan",
+  "description": "Executable strategy derived from ProjectSpec. Describes ordered operations, their dependencies, and execution policies.",
+  "type": "object",
+  "required": ["plan_id", "project_id", "version", "selected_toolkits", "operations", "status"],
+  "properties": {
+    "plan_id": { "type": "string" },
+    "project_id": { "type": "string" },
+    "version": { "type": "integer", "minimum": 1 },
+    "status": {
+      "type": "string",
+      "enum": ["pending", "executing", "completed", "failed", "superseded"]
+    },
+    "selected_toolkits": {
+      "type": "array",
+      "items": { "type": "string" },
+      "minItems": 1,
+      "description": "Toolkit IDs selected for this plan"
+    },
+    "operations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["op_id", "toolkit_op", "params"],
+        "properties": {
+          "op_id": { "type": "string", "description": "Unique operation instance ID" },
+          "toolkit_op": {
+            "type": "string",
+            "description": "Operation name from ToolkitManifest (e.g., backbone_generate)"
+          },
+          "tool_override": {
+            "type": "string",
+            "description": "Override the default tool for this operation (e.g., openfold instead of esmfold)"
+          },
+          "params": { "type": "object", "description": "Parameters for this operation" },
+          "depends_on": {
+            "type": "array",
+            "items": { "type": "string" },
+            "default": [],
+            "description": "op_ids this operation depends on"
+          },
+          "parallel_group": {
+            "type": "string",
+            "description": "Operations in the same parallel_group may run concurrently"
+          },
+          "cost_tier": {
+            "type": "string",
+            "enum": ["fast", "balanced", "accurate"]
+          }
+        }
+      }
+    },
+    "parallelism_policy": {
+      "type": "object",
+      "properties": {
+        "max_parallel_ops": { "type": "integer", "default": 4 },
+        "max_parallel_candidates": { "type": "integer", "default": 10 }
+      }
+    },
+    "stop_conditions": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Conditions that trigger early stop (e.g., 'top_candidate_plddt > 90')"
+    },
+    "fallback_policies": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["trigger", "action"],
+        "properties": {
+          "trigger": { "type": "string" },
+          "action": { "type": "string", "enum": ["retry", "skip", "substitute", "abort"] },
+          "substitute_tool": { "type": "string" }
+        }
+      }
+    },
+    "acceptance_rules": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Rules for accepting/rejecting candidates at each stage"
+    },
+    "created_at": { "type": "string", "format": "date-time" }
+  }
+}

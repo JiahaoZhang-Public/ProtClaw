@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "protclaw://contracts/run-artifact/v1",
+  "title": "RunArtifact",
+  "description": "Output of a single tool execution with full provenance. Every tool output is mapped to an artifact.",
+  "type": "object",
+  "required": ["artifact_id", "project_id", "artifact_type", "producer", "status"],
+  "properties": {
+    "artifact_id": { "type": "string" },
+    "project_id": { "type": "string" },
+    "plan_id": { "type": "string" },
+    "op_id": { "type": "string" },
+    "candidate_id": { "type": "string", "description": "Linked candidate if this artifact is candidate-specific" },
+    "artifact_type": {
+      "type": "string",
+      "enum": ["backbone", "sequence", "structure", "qc_report", "developability_report", "cluster_result", "ranking_result", "experiment_package", "custom"]
+    },
+    "producer": {
+      "type": "string",
+      "description": "Tool name that produced this artifact"
+    },
+    "status": {
+      "type": "string",
+      "enum": ["pending", "running", "succeeded", "failed", "cancelled", "resumable"]
+    },
+    "inputs_hash": {
+      "type": "string",
+      "description": "SHA256 hash of normalized input files"
+    },
+    "params_hash": {
+      "type": "string",
+      "description": "SHA256 hash of normalized parameters"
+    },
+    "files": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["path", "type"],
+        "properties": {
+          "path": { "type": "string" },
+          "type": { "type": "string", "enum": ["pdb", "fasta", "csv", "json", "html", "log", "other"] },
+          "size_bytes": { "type": "integer" },
+          "checksum": { "type": "string" }
+        }
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "description": "Tool-specific output metrics (pLDDT, RMSD, scores, etc.)"
+    },
+    "upstream_refs": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Artifact IDs this artifact depends on"
+    },
+    "provenance": {
+      "type": "object",
+      "required": ["tool_name", "tool_version"],
+      "properties": {
+        "tool_name": { "type": "string" },
+        "tool_version": { "type": "string" },
+        "image_digest": { "type": "string" },
+        "model_checkpoint": { "type": "string" },
+        "runtime_profile": { "type": "string", "enum": ["cpu", "gpu_small", "gpu_large"] },
+        "params_hash": { "type": "string" },
+        "random_seed": { "type": "integer" },
+        "host_id": { "type": "string" },
+        "started_at": { "type": "string", "format": "date-time" },
+        "completed_at": { "type": "string", "format": "date-time" },
+        "duration_seconds": { "type": "number" }
+      }
+    },
+    "cache_key": { "type": "string" },
+    "cache_hit": { "type": "boolean", "default": false },
+    "error_message": { "type": "string" },
+    "created_at": { "type": "string", "format": "date-time" }
+  }
+}

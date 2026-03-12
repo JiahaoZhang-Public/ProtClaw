@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "protclaw://contracts/evidence-record/v1",
+  "title": "EvidenceRecord",
+  "description": "Quality assessment or judgment linked to artifacts and candidates. All key conclusions must be traceable to evidence.",
+  "type": "object",
+  "required": ["evidence_id", "candidate_id", "claim", "evidence_source", "confidence"],
+  "properties": {
+    "evidence_id": { "type": "string" },
+    "candidate_id": { "type": "string" },
+    "project_id": { "type": "string" },
+    "claim": {
+      "type": "string",
+      "description": "The assertion this evidence supports (e.g., 'structure is high quality')"
+    },
+    "evidence_type": {
+      "type": "string",
+      "enum": ["evidence_backed", "hypothesis_only"],
+      "description": "Whether this is backed by computation/experiment or is speculative"
+    },
+    "evidence_source": {
+      "type": "string",
+      "enum": ["structure_qc", "developability", "binding_prediction", "experimental", "expert_judgment", "literature", "custom"]
+    },
+    "raw_metrics": {
+      "type": "object",
+      "description": "Raw numerical results (pLDDT, RMSD, binding energy, etc.)"
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "Confidence in the claim (0 = no confidence, 1 = certain)"
+    },
+    "reason_text": {
+      "type": "string",
+      "description": "Human-readable explanation of the evidence and reasoning"
+    },
+    "linked_artifacts": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Artifact IDs that produced this evidence"
+    },
+    "pass": {
+      "type": ["boolean", "null"],
+      "description": "Whether this evidence meets the acceptance threshold (null if no threshold)"
+    },
+    "created_at": { "type": "string", "format": "date-time" }
+  }
+}
