@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "protclaw://contracts/learning-update/v1",
+  "title": "LearningUpdate",
+  "description": "Insights derived from experiment feedback. Used to update ProjectSpec constraints and trigger replanning.",
+  "type": "object",
+  "required": ["update_id", "project_id", "source_feedback_refs"],
+  "properties": {
+    "update_id": { "type": "string" },
+    "project_id": { "type": "string" },
+    "source_feedback_refs": {
+      "type": "array",
+      "items": { "type": "string" },
+      "minItems": 1,
+      "description": "ExperimentFeedback IDs that this update is derived from"
+    },
+    "observed_failure_patterns": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["pattern", "frequency"],
+        "properties": {
+          "pattern": { "type": "string", "description": "Description of the failure pattern" },
+          "frequency": { "type": "number", "description": "Fraction of candidates showing this pattern" },
+          "affected_candidates": { "type": "array", "items": { "type": "string" } },
+          "hypothesis": { "type": "string" }
+        }
+      }
+    },
+    "new_constraints": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "New hard constraints to add to ProjectSpec"
+    },
+    "new_preferences": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "New soft preferences to add to ProjectSpec"
+    },
+    "parameter_adjustments": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["operation", "parameter", "old_value", "new_value", "rationale"],
+        "properties": {
+          "operation": { "type": "string" },
+          "parameter": { "type": "string" },
+          "old_value": {},
+          "new_value": {},
+          "rationale": { "type": "string" }
+        }
+      }
+    },
+    "plan_impact_summary": {
+      "type": "string",
+      "description": "Summary of how this learning should affect the next DesignPlan"
+    },
+    "success_rate": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "Fraction of candidates that passed experimental validation"
+    },
+    "created_at": { "type": "string", "format": "date-time" }
+  }
+}

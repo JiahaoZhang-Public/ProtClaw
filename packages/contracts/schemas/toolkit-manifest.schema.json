@@ -1,0 +1,113 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "protclaw://contracts/toolkit-manifest/v1",
+  "title": "ToolkitManifest",
+  "description": "Standard declaration of a toolkit's capabilities, operations, I/O schemas, and runtime requirements.",
+  "type": "object",
+  "required": ["toolkit_id", "name", "version", "operations"],
+  "properties": {
+    "toolkit_id": { "type": "string" },
+    "name": { "type": "string" },
+    "version": { "type": "string" },
+    "description": { "type": "string" },
+    "capabilities": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "supported_task_types": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "operations": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["tool", "description", "inputs", "outputs"],
+        "properties": {
+          "tool": { "type": "string", "description": "Tool identifier" },
+          "description": { "type": "string" },
+          "docker_image": { "type": "string" },
+          "gpu_required": { "type": "boolean", "default": false },
+          "depends_on": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "inputs": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "type": { "type": "string" },
+                "format": { "type": "string" },
+                "description": { "type": "string" },
+                "required": { "type": "boolean" },
+                "default": {}
+              }
+            }
+          },
+          "outputs": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "type": { "type": "string" },
+                "format": { "type": "string" },
+                "description": { "type": "string" }
+              }
+            }
+          },
+          "planner_hints": {
+            "type": "object",
+            "properties": {
+              "typical_runtime": { "type": "string" },
+              "cost_tier": { "type": "string", "enum": ["fast", "balanced", "accurate"] },
+              "description": { "type": "string" }
+            }
+          },
+          "cost_profile": {
+            "type": "object",
+            "properties": {
+              "gpu_minutes_estimate": { "type": "number" },
+              "cpu_minutes_estimate": { "type": "number" },
+              "memory_gb": { "type": "number" }
+            }
+          },
+          "runtime_requirements": {
+            "type": "object",
+            "properties": {
+              "image": { "type": "string" },
+              "image_digest": { "type": "string" },
+              "entrypoint": { "type": "string" },
+              "required_env": { "type": "array", "items": { "type": "string" } },
+              "hardware_profile": { "type": "string", "enum": ["cpu", "gpu_small", "gpu_large"] },
+              "mount_policy": { "type": "string", "enum": ["read_only", "read_write"] },
+              "cache_namespace": { "type": "string" },
+              "network_policy": { "type": "string", "enum": ["none", "limited", "full"] },
+              "checkpoint_refs": { "type": "array", "items": { "type": "string" } }
+            }
+          },
+          "evidence_types": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "cache_key_fields": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "failure_modes": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "mode": { "type": "string" },
+                "description": { "type": "string" },
+                "severity": { "type": "string", "enum": ["warning", "error", "fatal"] },
+                "suggested_action": { "type": "string" }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

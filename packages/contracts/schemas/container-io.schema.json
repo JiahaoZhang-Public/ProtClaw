@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "protclaw://contracts/container-io/v1",
+  "title": "ContainerIO",
+  "description": "Extended ContainerInput/ContainerOutput for science tool execution. Extends NanoClaw's container protocol.",
+  "definitions": {
+    "ScienceContainerInput": {
+      "type": "object",
+      "required": ["run_id", "tool_name", "adapter_module", "params"],
+      "properties": {
+        "run_id": { "type": "string", "description": "Unique run identifier" },
+        "project_id": { "type": "string" },
+        "plan_id": { "type": "string" },
+        "op_id": { "type": "string" },
+        "candidate_id": { "type": "string" },
+        "tool_name": { "type": "string" },
+        "adapter_module": { "type": "string", "description": "Python module path for the adapter (e.g., tools.rfdiffusion.adapter)" },
+        "params": { "type": "object", "description": "Tool-specific parameters" },
+        "input_files": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["source_path", "mount_path"],
+            "properties": {
+              "source_path": { "type": "string", "description": "Host path" },
+              "mount_path": { "type": "string", "description": "Path inside container" }
+            }
+          }
+        },
+        "cache_key": { "type": "string" },
+        "timeout_seconds": { "type": "integer", "default": 3600 }
+      }
+    },
+    "ScienceContainerOutput": {
+      "type": "object",
+      "required": ["run_id", "status"],
+      "properties": {
+        "run_id": { "type": "string" },
+        "status": { "type": "string", "enum": ["success", "failed", "timeout", "cancelled"] },
+        "result": {
+          "type": "object",
+          "description": "ToolResult from the science adapter (see tool-result.schema.json)"
+        },
+        "exit_code": { "type": "integer" },
+        "stdout": { "type": "string" },
+        "stderr": { "type": "string" },
+        "duration_seconds": { "type": "number" }
+      }
+    }
+  }
+}

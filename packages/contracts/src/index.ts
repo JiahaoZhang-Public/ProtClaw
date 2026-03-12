@@ -17,5 +17,4 @@
  * - ToolResult: Standardized tool adapter output envelope
  */
 
-// Generated types will be re-exported here after codegen is implemented
-export {};
+export * from "./generated/index.js";

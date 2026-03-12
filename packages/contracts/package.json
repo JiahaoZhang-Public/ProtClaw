@@ -5,17 +5,25 @@
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
   "scripts": {
-    "codegen": "echo 'codegen not yet implemented'",
-    "codegen:check": "echo 'codegen:check not yet implemented'",
+    "codegen": "tsx scripts/generate-ts.ts && python scripts/generate-py.py",
+    "codegen:check": "tsx scripts/generate-ts.ts --check && python scripts/generate-py.py --check",
     "build": "tsc",
     "typecheck": "tsc --noEmit",
-    "test": "echo 'no tests yet'"
+    "test": "vitest run"
   },
   "dependencies": {
     "zod": "^4.3.6"
   },
   "devDependencies": {
-    "typescript": "^5.7.0"
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "vitest": "^4.0.18"
   }
 }
