@@ -14,6 +14,8 @@ import { CronExpressionParser } from 'cron-parser';
 const IPC_DIR = '/workspace/ipc';
 const MESSAGES_DIR = path.join(IPC_DIR, 'messages');
 const TASKS_DIR = path.join(IPC_DIR, 'tasks');
+const SCIENCE_DIR = path.join(IPC_DIR, 'science');
+const SCIENCE_RESPONSES_DIR = path.join(IPC_DIR, 'science-responses');
 
 // Context from environment variables (set by the agent runner)
 const chatJid = process.env.NANOCLAW_CHAT_JID!;
@@ -330,6 +332,328 @@ Use available_groups.json to find the JID for a group. The folder name must be c
     return {
       content: [{ type: 'text' as const, text: `Group "${args.name}" registered. It will start receiving messages immediately.` }],
     };
+  },
+);
+
+// --- ProtClaw Science Tools ---
+
+function writeScienceIpcFile(data: object): string {
+  return writeIpcFile(SCIENCE_DIR, data);
+}
+
+function waitForScienceResponse(filename: string, timeoutMs: number = 10000): object | null {
+  const responseFile = path.join(SCIENCE_RESPONSES_DIR, filename);
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (fs.existsSync(responseFile)) {
+      try {
+        const data = JSON.parse(fs.readFileSync(responseFile, 'utf-8'));
+        fs.unlinkSync(responseFile);
+        return data;
+      } catch {
+        return null;
+      }
+    }
+    // Busy-wait with small delay (synchronous polling in container context)
+    const waitUntil = Date.now() + 100;
+    while (Date.now() < waitUntil) { /* spin */ }
+  }
+  return null;
+}
+
+server.tool(
+  'create_project',
+  'Create a new protein design project with a name and specification.',
+  {
+    id: z.string().describe('Unique project identifier'),
+    name: z.string().describe('Human-readable project name'),
+    spec: z.string().describe('JSON string of the project specification'),
+  },
+  async (args) => {
+    const filename = writeScienceIpcFile({
+      type: 'science:create_project',
+      project: { id: args.id, name: args.name, spec: JSON.parse(args.spec) },
+    });
+    const result = waitForScienceResponse(filename);
+    return { content: [{ type: 'text' as const, text: result ? JSON.stringify(result) : `Project creation request submitted (${args.id})` }] };
+  },
+);
+
+server.tool(
+  'get_project',
+  'Get project details by ID.',
+  {
+    project_id: z.string().describe('The project ID to retrieve'),
+  },
+  async (args) => {
+    const filename = writeScienceIpcFile({
+      type: 'science:get_project',
+      projectId: args.project_id,
+    });
+    const result = waitForScienceResponse(filename);
+    return { content: [{ type: 'text' as const, text: result ? JSON.stringify(result) : 'No response received' }] };
+  },
+);
+
+server.tool(
+  'update_project',
+  'Update project properties (name, spec, status).',
+  {
+    project_id: z.string().describe('The project ID to update'),
+    name: z.string().optional().describe('New project name'),
+    spec: z.string().optional().describe('New project specification (JSON string)'),
+    status: z.enum(['active', 'completed', 'archived']).optional().describe('New project status'),
+  },
+  async (args) => {
+    const updates: Record<string, unknown> = {};
+    if (args.name) updates.name = args.name;
+    if (args.spec) updates.spec = JSON.parse(args.spec);
+    if (args.status) updates.status = args.status;
+
+    const filename = writeScienceIpcFile({
+      type: 'science:update_project',
+      projectId: args.project_id,
+      updates,
+    });
+    const result = waitForScienceResponse(filename);
+    return { content: [{ type: 'text' as const, text: result ? JSON.stringify(result) : 'Update request submitted' }] };
+  },
+);
+
+server.tool(
+  'create_plan',
+  'Create a new design plan for a project.',
+  {
+    plan_id: z.string().describe('Unique plan identifier'),
+    project_id: z.string().describe('The project this plan belongs to'),
+    plan: z.string().describe('JSON string of the plan specification'),
+  },
+  async (args) => {
+    const filename = writeScienceIpcFile({
+      type: 'science:create_plan',
+      planId: args.plan_id,
+      projectId: args.project_id,
+      plan: JSON.parse(args.plan),
+    });
+    const result = waitForScienceResponse(filename);
+    return { content: [{ type: 'text' as const, text: result ? JSON.stringify(result) : `Plan ${args.plan_id} creation submitted` }] };
+  },
+);
+
+server.tool(
+  'get_plan',
+  'Get a design plan by ID, or the latest plan for a project.',
+  {
+    plan_id: z.string().optional().describe('Specific plan ID'),
+    project_id: z.string().optional().describe('Project ID to get latest plan for'),
+  },
+  async (args) => {
+    const filename = writeScienceIpcFile({
+      type: 'science:get_plan',
+      planId: args.plan_id,
+      projectId: args.project_id,
+    });
+    const result = waitForScienceResponse(filename);
+    return { content: [{ type: 'text' as const, text: result ? JSON.stringify(result) : 'No plan found' }] };
+  },
+);
+
+server.tool(
+  'submit_tool_run',
+  'Submit a science tool operation for execution.',
+  {
+    id: z.string().describe('Unique artifact/run identifier'),
+    project_id: z.string().describe('Project this run belongs to'),
+    plan_id: z.string().optional().describe('Plan this run is part of'),
+    op_id: z.string().optional().describe('Operation identifier in the plan'),
+    candidate_id: z.string().optional().describe('Candidate this run is for'),
+    artifact_type: z.string().optional().describe('Type of artifact being produced'),
+    producer: z.string().optional().describe('Tool/toolkit producing the artifact'),
+    artifact: z.string().optional().describe('JSON string of initial artifact data'),
+  },
+  async (args) => {
+    const filename = writeScienceIpcFile({
+      type: 'science:submit_run',
+      artifact: {
+        id: args.id,
+        project_id: args.project_id,
+        plan_id: args.plan_id || '',
+        op_id: args.op_id || '',
+        candidate_id: args.candidate_id || '',
+        artifact_type: args.artifact_type || '',
+        producer: args.producer || '',
+        status: 'pending',
+        artifact: args.artifact ? JSON.parse(args.artifact) : {},
+      },
+    });
+    const result = waitForScienceResponse(filename);
+    return { content: [{ type: 'text' as const, text: result ? JSON.stringify(result) : `Run ${args.id} submitted` }] };
+  },
+);
+
+server.tool(
+  'get_run_status',
+  'Get the status of science tool run(s).',
+  {
+    project_id: z.string().describe('Project ID'),
+    op_id: z.string().optional().describe('Filter by operation ID'),
+  },
+  async (args) => {
+    const filename = writeScienceIpcFile({
+      type: 'science:get_status',
+      projectId: args.project_id,
+      opId: args.op_id,
+    });
+    const result = waitForScienceResponse(filename);
+    return { content: [{ type: 'text' as const, text: result ? JSON.stringify(result) : 'No status available' }] };
+  },
+);
+
+server.tool(
+  'get_artifacts',
+  'Get artifacts for a project, with optional filters.',
+  {
+    project_id: z.string().describe('Project ID'),
+    candidate_id: z.string().optional().describe('Filter by candidate ID'),
+    op_id: z.string().optional().describe('Filter by operation ID'),
+    artifact_type: z.string().optional().describe('Filter by artifact type'),
+  },
+  async (args) => {
+    const filename = writeScienceIpcFile({
+      type: 'science:get_artifacts',
+      projectId: args.project_id,
+      candidateId: args.candidate_id,
+      opId: args.op_id,
+      artifactType: args.artifact_type,
+    });
+    const result = waitForScienceResponse(filename);
+    return { content: [{ type: 'text' as const, text: result ? JSON.stringify(result) : 'No artifacts found' }] };
+  },
+);
+
+server.tool(
+  'record_evidence',
+  'Record an evidence assessment for a candidate.',
+  {
+    id: z.string().describe('Unique evidence record identifier'),
+    candidate_id: z.string().optional().describe('Candidate this evidence is for'),
+    project_id: z.string().optional().describe('Project ID'),
+    record: z.string().describe('JSON string of the evidence record'),
+  },
+  async (args) => {
+    const filename = writeScienceIpcFile({
+      type: 'science:record_evidence',
+      evidence: {
+        id: args.id,
+        candidate_id: args.candidate_id || '',
+        project_id: args.project_id || '',
+        record: JSON.parse(args.record),
+      },
+    });
+    const result = waitForScienceResponse(filename);
+    return { content: [{ type: 'text' as const, text: result ? JSON.stringify(result) : `Evidence ${args.id} recorded` }] };
+  },
+);
+
+server.tool(
+  'create_candidate',
+  'Register a new candidate protein design.',
+  {
+    id: z.string().describe('Unique candidate identifier'),
+    project_id: z.string().describe('Project this candidate belongs to'),
+    sequence: z.string().optional().describe('Protein sequence'),
+    status: z.enum(['draft', 'active', 'promoted', 'rejected', 'archived']).optional().describe('Candidate status'),
+    card: z.string().optional().describe('JSON string of candidate card/metadata'),
+  },
+  async (args) => {
+    const filename = writeScienceIpcFile({
+      type: 'science:create_candidate',
+      candidate: {
+        id: args.id,
+        project_id: args.project_id,
+        sequence: args.sequence || '',
+        status: args.status || 'draft',
+        card: args.card ? JSON.parse(args.card) : {},
+      },
+    });
+    const result = waitForScienceResponse(filename);
+    return { content: [{ type: 'text' as const, text: result ? JSON.stringify(result) : `Candidate ${args.id} created` }] };
+  },
+);
+
+server.tool(
+  'list_candidates',
+  'List candidate proteins for a project.',
+  {
+    project_id: z.string().describe('Project ID'),
+    status: z.string().optional().describe('Filter by status'),
+  },
+  async (args) => {
+    const filename = writeScienceIpcFile({
+      type: 'science:list_candidates',
+      projectId: args.project_id,
+      status: args.status,
+    });
+    const result = waitForScienceResponse(filename);
+    return { content: [{ type: 'text' as const, text: result ? JSON.stringify(result) : 'No candidates found' }] };
+  },
+);
+
+server.tool(
+  'rank_candidates',
+  'Trigger ranking of active candidates in a project.',
+  {
+    project_id: z.string().describe('Project ID'),
+  },
+  async (args) => {
+    const filename = writeScienceIpcFile({
+      type: 'science:rank_candidates',
+      projectId: args.project_id,
+    });
+    const result = waitForScienceResponse(filename);
+    return { content: [{ type: 'text' as const, text: result ? JSON.stringify(result) : 'Ranking submitted' }] };
+  },
+);
+
+server.tool(
+  'submit_experiment_feedback',
+  'Submit experimental feedback for a candidate.',
+  {
+    id: z.string().describe('Unique feedback identifier'),
+    project_id: z.string().describe('Project ID'),
+    candidate_id: z.string().optional().describe('Candidate this feedback is for'),
+    feedback: z.string().describe('JSON string of the feedback data'),
+  },
+  async (args) => {
+    const filename = writeScienceIpcFile({
+      type: 'science:submit_feedback',
+      feedback: {
+        id: args.id,
+        project_id: args.project_id,
+        candidate_id: args.candidate_id || '',
+        feedback: JSON.parse(args.feedback),
+      },
+    });
+    const result = waitForScienceResponse(filename);
+    return { content: [{ type: 'text' as const, text: result ? JSON.stringify(result) : `Feedback ${args.id} submitted` }] };
+  },
+);
+
+server.tool(
+  'request_replan',
+  'Request a design replan with updated constraints.',
+  {
+    project_id: z.string().describe('Project ID'),
+    constraints: z.string().optional().describe('JSON string of updated constraints'),
+  },
+  async (args) => {
+    const filename = writeScienceIpcFile({
+      type: 'science:request_replan',
+      projectId: args.project_id,
+      constraints: args.constraints ? JSON.parse(args.constraints) : {},
+    });
+    const result = waitForScienceResponse(filename);
+    return { content: [{ type: 'text' as const, text: result ? JSON.stringify(result) : 'Replan request submitted' }] };
   },
 );
 

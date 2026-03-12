@@ -139,6 +139,93 @@ function createSchema(database: Database.Database): void {
   } catch {
     /* columns already exist */
   }
+
+  // --- ProtClaw domain tables (Phase 2) ---
+  createProtClawSchema(database);
+}
+
+function createProtClawSchema(database: Database.Database): void {
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS projects (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      spec TEXT NOT NULL DEFAULT '{}',
+      status TEXT NOT NULL DEFAULT 'active',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS design_plans (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL,
+      version INTEGER NOT NULL DEFAULT 1,
+      status TEXT NOT NULL DEFAULT 'draft',
+      plan TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (project_id) REFERENCES projects(id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_design_plans_project_id ON design_plans(project_id);
+
+    CREATE TABLE IF NOT EXISTS run_artifacts (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL,
+      plan_id TEXT NOT NULL DEFAULT '',
+      op_id TEXT NOT NULL DEFAULT '',
+      candidate_id TEXT NOT NULL DEFAULT '',
+      artifact_type TEXT NOT NULL DEFAULT '',
+      producer TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'pending',
+      artifact TEXT NOT NULL DEFAULT '{}',
+      cache_key TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (project_id) REFERENCES projects(id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_run_artifacts_project_id ON run_artifacts(project_id);
+    CREATE INDEX IF NOT EXISTS idx_run_artifacts_candidate_id ON run_artifacts(candidate_id);
+    CREATE INDEX IF NOT EXISTS idx_run_artifacts_status ON run_artifacts(status);
+    CREATE INDEX IF NOT EXISTS idx_run_artifacts_op_id ON run_artifacts(op_id);
+
+    CREATE TABLE IF NOT EXISTS evidence_records (
+      id TEXT PRIMARY KEY,
+      candidate_id TEXT NOT NULL DEFAULT '',
+      project_id TEXT NOT NULL DEFAULT '',
+      record TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (project_id) REFERENCES projects(id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_evidence_records_candidate_id ON evidence_records(candidate_id);
+    CREATE INDEX IF NOT EXISTS idx_evidence_records_project_id ON evidence_records(project_id);
+
+    CREATE TABLE IF NOT EXISTS candidates (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL,
+      sequence TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'draft',
+      rank INTEGER,
+      card TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (project_id) REFERENCES projects(id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_candidates_project_id ON candidates(project_id);
+    CREATE INDEX IF NOT EXISTS idx_candidates_status ON candidates(status);
+
+    CREATE TABLE IF NOT EXISTS experiment_feedback (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL,
+      candidate_id TEXT NOT NULL DEFAULT '',
+      feedback TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (project_id) REFERENCES projects(id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_experiment_feedback_project_id ON experiment_feedback(project_id);
+    CREATE INDEX IF NOT EXISTS idx_experiment_feedback_candidate_id ON experiment_feedback(candidate_id);
+  `);
+}
+
+/** Returns the raw better-sqlite3 Database handle. Must be called after initDatabase(). */
+export function getDb(): Database.Database {
+  return db;
 }
 
 export function initDatabase(): void {

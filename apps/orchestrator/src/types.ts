@@ -77,6 +77,67 @@ export interface TaskRunLog {
   error: string | null;
 }
 
+// --- ProtClaw domain types ---
+
+export interface ProjectRecord {
+  id: string;
+  name: string;
+  spec: object;
+  status: 'active' | 'completed' | 'archived';
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DesignPlanRecord {
+  id: string;
+  project_id: string;
+  version: number;
+  status: 'draft' | 'active' | 'completed' | 'superseded';
+  plan: object;
+  created_at: string;
+}
+
+export interface RunArtifactRecord {
+  id: string;
+  project_id: string;
+  plan_id: string;
+  op_id: string;
+  candidate_id: string;
+  artifact_type: string;
+  producer: string;
+  status: 'pending' | 'running' | 'completed' | 'failed';
+  artifact: object;
+  cache_key: string;
+  created_at: string;
+}
+
+export interface EvidenceRecordEntry {
+  id: string;
+  candidate_id: string;
+  project_id: string;
+  record: object;
+  created_at: string;
+}
+
+export interface CandidateRecord {
+  id: string;
+  project_id: string;
+  sequence: string;
+  status: 'draft' | 'active' | 'promoted' | 'rejected' | 'archived';
+  rank: number | null;
+  card: object;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface FeedbackRecord {
+  id: string;
+  project_id: string;
+  candidate_id: string;
+  feedback: object;
+  created_at: string;
+}
+
 // --- Channel abstraction ---
 
 export interface Channel {

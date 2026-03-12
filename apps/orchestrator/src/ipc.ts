@@ -5,9 +5,10 @@ import { CronExpressionParser } from 'cron-parser';
 
 import { DATA_DIR, IPC_POLL_INTERVAL, TIMEZONE } from './config.js';
 import { AvailableGroup } from './container-runner.js';
-import { createTask, deleteTask, getTaskById, updateTask } from './db.js';
+import { createTask, deleteTask, getTaskById, updateTask, getDb } from './db.js';
 import { isValidGroupFolder } from './group-folder.js';
 import { logger } from './logger.js';
+import { ProjectManager } from './project-manager.js';
 import { RegisteredGroup } from './types.js';
 
 export interface IpcDeps {
@@ -143,6 +144,44 @@ export function startIpcWatcher(deps: IpcDeps): void {
         }
       } catch (err) {
         logger.error({ err, sourceGroup }, 'Error reading IPC tasks directory');
+      }
+
+      // Process science operations from this group's IPC directory
+      const scienceDir = path.join(ipcBaseDir, sourceGroup, 'science');
+      try {
+        if (fs.existsSync(scienceDir)) {
+          const scienceFiles = fs
+            .readdirSync(scienceDir)
+            .filter((f) => f.endsWith('.json'));
+          for (const file of scienceFiles) {
+            const filePath = path.join(scienceDir, file);
+            try {
+              const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+              const result = processScienceIpc(data);
+              // Write result back to a response file
+              const responseDir = path.join(ipcBaseDir, sourceGroup, 'science-responses');
+              fs.mkdirSync(responseDir, { recursive: true });
+              const responseFile = path.join(responseDir, file);
+              const tempPath = `${responseFile}.tmp`;
+              fs.writeFileSync(tempPath, JSON.stringify(result, null, 2));
+              fs.renameSync(tempPath, responseFile);
+              fs.unlinkSync(filePath);
+            } catch (err) {
+              logger.error(
+                { file, sourceGroup, err },
+                'Error processing IPC science operation',
+              );
+              const errorDir = path.join(ipcBaseDir, 'errors');
+              fs.mkdirSync(errorDir, { recursive: true });
+              fs.renameSync(
+                filePath,
+                path.join(errorDir, `${sourceGroup}-science-${file}`),
+              );
+            }
+          }
+        }
+      } catch (err) {
+        logger.error({ err, sourceGroup }, 'Error reading IPC science directory');
       }
     }
 
@@ -451,5 +490,211 @@ export async function processTaskIpc(
 
     default:
       logger.warn({ type: data.type }, 'Unknown IPC task type');
+  }
+}
+
+// --- Science IPC handlers ---
+
+let _projectManager: ProjectManager | null = null;
+
+function getProjectManager(): ProjectManager {
+  if (!_projectManager) {
+    _projectManager = new ProjectManager(getDb());
+  }
+  return _projectManager;
+}
+
+/** @internal - for tests only. Reset project manager instance. */
+export function _resetProjectManager(): void {
+  _projectManager = null;
+}
+
+export interface ScienceIpcResult {
+  success: boolean;
+  data?: unknown;
+  error?: string;
+}
+
+export function processScienceIpc(data: {
+  type: string;
+  [key: string]: unknown;
+}): ScienceIpcResult {
+  const pm = getProjectManager();
+
+  try {
+    switch (data.type) {
+      case 'science:submit_run': {
+        if (!data.artifact) {
+          return { success: false, error: 'Missing artifact data' };
+        }
+        const artifact = data.artifact as {
+          id: string;
+          project_id: string;
+          plan_id?: string;
+          op_id?: string;
+          candidate_id?: string;
+          artifact_type?: string;
+          producer?: string;
+          status?: string;
+          artifact?: object;
+          cache_key?: string;
+        };
+        pm.recordArtifact({
+          id: artifact.id,
+          project_id: artifact.project_id,
+          plan_id: artifact.plan_id || '',
+          op_id: artifact.op_id || '',
+          candidate_id: artifact.candidate_id || '',
+          artifact_type: artifact.artifact_type || '',
+          producer: artifact.producer || '',
+          status: (artifact.status as 'pending' | 'running' | 'completed' | 'failed') || 'pending',
+          artifact: artifact.artifact || {},
+          cache_key: artifact.cache_key || '',
+        });
+        logger.info({ artifactId: artifact.id }, 'Science run submitted via IPC');
+        return { success: true, data: { id: artifact.id } };
+      }
+
+      case 'science:get_status': {
+        const projectId = data.projectId as string;
+        const opId = data.opId as string | undefined;
+        if (!projectId) {
+          return { success: false, error: 'Missing projectId' };
+        }
+        const artifacts = pm.getArtifacts(projectId, opId ? { opId } : undefined);
+        return { success: true, data: artifacts };
+      }
+
+      case 'science:get_artifacts': {
+        const projectId = data.projectId as string;
+        if (!projectId) {
+          return { success: false, error: 'Missing projectId' };
+        }
+        const filters: { candidateId?: string; opId?: string; type?: string } = {};
+        if (data.candidateId) filters.candidateId = data.candidateId as string;
+        if (data.opId) filters.opId = data.opId as string;
+        if (data.artifactType) filters.type = data.artifactType as string;
+        const artifacts = pm.getArtifacts(projectId, filters);
+        return { success: true, data: artifacts };
+      }
+
+      case 'science:record_evidence': {
+        const evidence = data.evidence as {
+          id: string;
+          candidate_id?: string;
+          project_id?: string;
+          record?: object;
+        };
+        if (!evidence?.id) {
+          return { success: false, error: 'Missing evidence data or id' };
+        }
+        pm.recordEvidence({
+          id: evidence.id,
+          candidate_id: evidence.candidate_id || '',
+          project_id: evidence.project_id || '',
+          record: evidence.record || {},
+        });
+        logger.info({ evidenceId: evidence.id }, 'Evidence recorded via IPC');
+        return { success: true, data: { id: evidence.id } };
+      }
+
+      case 'science:create_candidate': {
+        const candidate = data.candidate as {
+          id: string;
+          project_id: string;
+          sequence?: string;
+          status?: string;
+          rank?: number | null;
+          card?: object;
+        };
+        if (!candidate?.id || !candidate?.project_id) {
+          return { success: false, error: 'Missing candidate id or project_id' };
+        }
+        pm.createCandidate({
+          id: candidate.id,
+          project_id: candidate.project_id,
+          sequence: candidate.sequence || '',
+          status: (candidate.status as 'draft' | 'active' | 'promoted' | 'rejected' | 'archived') || 'draft',
+          rank: candidate.rank ?? null,
+          card: candidate.card || {},
+        });
+        logger.info({ candidateId: candidate.id }, 'Candidate created via IPC');
+        return { success: true, data: { id: candidate.id } };
+      }
+
+      case 'science:list_candidates': {
+        const projectId = data.projectId as string;
+        if (!projectId) {
+          return { success: false, error: 'Missing projectId' };
+        }
+        const status = data.status as string | undefined;
+        const candidates = pm.listCandidates(projectId, status);
+        return { success: true, data: candidates };
+      }
+
+      case 'science:rank_candidates': {
+        const projectId = data.projectId as string;
+        if (!projectId) {
+          return { success: false, error: 'Missing projectId' };
+        }
+        // Retrieve all active candidates and rank them by their current rank field
+        const candidates = pm.listCandidates(projectId, 'active');
+        // Re-rank by assigning sequential ranks based on current order
+        for (let i = 0; i < candidates.length; i++) {
+          pm.updateCandidate(candidates[i].id, { rank: i + 1 });
+        }
+        logger.info({ projectId, count: candidates.length }, 'Candidates ranked via IPC');
+        return { success: true, data: { ranked: candidates.length } };
+      }
+
+      case 'science:submit_feedback': {
+        const feedback = data.feedback as {
+          id: string;
+          project_id: string;
+          candidate_id?: string;
+          feedback?: object;
+        };
+        if (!feedback?.id || !feedback?.project_id) {
+          return { success: false, error: 'Missing feedback id or project_id' };
+        }
+        pm.recordFeedback({
+          id: feedback.id,
+          project_id: feedback.project_id,
+          candidate_id: feedback.candidate_id || '',
+          feedback: feedback.feedback || {},
+        });
+        logger.info({ feedbackId: feedback.id }, 'Feedback submitted via IPC');
+        return { success: true, data: { id: feedback.id } };
+      }
+
+      case 'science:request_replan': {
+        const projectId = data.projectId as string;
+        const constraints = data.constraints as object | undefined;
+        if (!projectId) {
+          return { success: false, error: 'Missing projectId' };
+        }
+        // Mark the latest plan as superseded and create a placeholder for the new plan
+        const latestPlan = pm.getLatestPlan(projectId);
+        if (latestPlan) {
+          // We cannot directly update plan status, so we record a new plan version
+          const newPlanId = `plan-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+          pm.createPlan(newPlanId, projectId, {
+            replan: true,
+            previous_plan_id: latestPlan.id,
+            updated_constraints: constraints || {},
+          });
+          logger.info({ projectId, newPlanId }, 'Replan requested via IPC');
+          return { success: true, data: { planId: newPlanId } };
+        }
+        return { success: false, error: 'No existing plan found for project' };
+      }
+
+      default:
+        return { success: false, error: `Unknown science IPC type: ${data.type}` };
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    logger.error({ err, type: data.type }, 'Science IPC error');
+    return { success: false, error: message };
   }
 }
