@@ -220,6 +220,16 @@ export function createProtClawSchema(database: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_experiment_feedback_project_id ON experiment_feedback(project_id);
     CREATE INDEX IF NOT EXISTS idx_experiment_feedback_candidate_id ON experiment_feedback(candidate_id);
+
+    CREATE TABLE IF NOT EXISTS learning_updates (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL,
+      source_feedback_refs TEXT NOT NULL DEFAULT '[]',
+      update_data TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (project_id) REFERENCES projects(id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_learning_updates_project_id ON learning_updates(project_id);
   `);
 }
 

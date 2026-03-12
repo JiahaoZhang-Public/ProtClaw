@@ -7,6 +7,7 @@ import {
   EvidenceRecordEntry,
   CandidateRecord,
   FeedbackRecord,
+  LearningUpdateRecord,
 } from './types.js';
 
 /**
@@ -334,5 +335,41 @@ export class ProjectManager {
       ...row,
       feedback: JSON.parse(row.feedback),
     }));
+  }
+
+  // --- Learning Updates ---
+
+  recordLearningUpdate(update: Omit<LearningUpdateRecord, 'created_at'> & { created_at?: string }): void {
+    const now = update.created_at || new Date().toISOString();
+    this.db
+      .prepare(
+        `INSERT INTO learning_updates (id, project_id, source_feedback_refs, update_data, created_at) VALUES (?, ?, ?, ?, ?)`,
+      )
+      .run(
+        update.id,
+        update.project_id,
+        JSON.stringify(update.source_feedback_refs || []),
+        JSON.stringify(update.update_data || {}),
+        now,
+      );
+  }
+
+  getLearningUpdates(projectId: string): LearningUpdateRecord[] {
+    const rows = this.db
+      .prepare('SELECT * FROM learning_updates WHERE project_id = ? ORDER BY created_at DESC')
+      .all(projectId) as Array<{
+        id: string; project_id: string; source_feedback_refs: string; update_data: string; created_at: string;
+      }>;
+    return rows.map((row) => ({
+      ...row,
+      source_feedback_refs: JSON.parse(row.source_feedback_refs),
+      update_data: JSON.parse(row.update_data),
+    }));
+  }
+
+  updatePlanStatus(planId: string, status: DesignPlanRecord['status']): void {
+    this.db
+      .prepare('UPDATE design_plans SET status = ? WHERE id = ?')
+      .run(status, planId);
   }
 }

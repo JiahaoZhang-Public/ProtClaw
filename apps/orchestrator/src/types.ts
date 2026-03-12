@@ -138,6 +138,14 @@ export interface FeedbackRecord {
   created_at: string;
 }
 
+export interface LearningUpdateRecord {
+  id: string;
+  project_id: string;
+  source_feedback_refs: string[];
+  update_data: object;
+  created_at: string;
+}
+
 // --- Channel abstraction ---
 
 export interface Channel {
