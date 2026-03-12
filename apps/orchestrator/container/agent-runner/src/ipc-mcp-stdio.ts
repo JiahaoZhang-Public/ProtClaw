@@ -657,6 +657,71 @@ server.tool(
   },
 );
 
+// --- Toolkit system MCP tools ---
+
+server.tool(
+  'execute_plan',
+  'Execute a design plan for a project. Triggers async execution of all plan operations.',
+  {
+    project_id: z.string().describe('Project ID'),
+    plan_id: z.string().describe('Plan ID to execute'),
+  },
+  async (args) => {
+    const filename = writeScienceIpcFile({
+      type: 'science:execute_plan',
+      projectId: args.project_id,
+      planId: args.plan_id,
+    });
+    const result = waitForScienceResponse(filename);
+    return { content: [{ type: 'text' as const, text: result ? JSON.stringify(result) : `Plan ${args.plan_id} execution requested` }] };
+  },
+);
+
+server.tool(
+  'get_plan_execution_status',
+  'Get the execution status of a design plan, including per-operation status.',
+  {
+    plan_id: z.string().describe('Plan ID to check'),
+  },
+  async (args) => {
+    const filename = writeScienceIpcFile({
+      type: 'science:get_plan_status',
+      planId: args.plan_id,
+    });
+    const result = waitForScienceResponse(filename);
+    return { content: [{ type: 'text' as const, text: result ? JSON.stringify(result) : 'Status unavailable' }] };
+  },
+);
+
+server.tool(
+  'list_toolkits',
+  'List all available toolkit manifests with their operations.',
+  {},
+  async () => {
+    const filename = writeScienceIpcFile({
+      type: 'science:list_toolkits',
+    });
+    const result = waitForScienceResponse(filename);
+    return { content: [{ type: 'text' as const, text: result ? JSON.stringify(result) : 'No toolkits available' }] };
+  },
+);
+
+server.tool(
+  'get_toolkit_operations',
+  'Get detailed operations for a specific toolkit.',
+  {
+    toolkit_id: z.string().describe('Toolkit identifier (e.g., "de-novo")'),
+  },
+  async (args) => {
+    const filename = writeScienceIpcFile({
+      type: 'science:get_toolkit_operations',
+      toolkitId: args.toolkit_id,
+    });
+    const result = waitForScienceResponse(filename);
+    return { content: [{ type: 'text' as const, text: result ? JSON.stringify(result) : `Toolkit ${args.toolkit_id} not found` }] };
+  },
+);
+
 // Start the stdio transport
 const transport = new StdioServerTransport();
 await server.connect(transport);

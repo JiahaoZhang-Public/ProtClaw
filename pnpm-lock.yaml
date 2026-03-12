@@ -17,6 +17,9 @@ importers:
 
   apps/orchestrator:
     dependencies:
+      '@protclaw/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
       better-sqlite3:
         specifier: ^11.8.1
         version: 11.10.0
