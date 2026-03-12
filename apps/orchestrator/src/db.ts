@@ -144,7 +144,7 @@ function createSchema(database: Database.Database): void {
   createProtClawSchema(database);
 }
 
-function createProtClawSchema(database: Database.Database): void {
+export function createProtClawSchema(database: Database.Database): void {
   database.exec(`
     CREATE TABLE IF NOT EXISTS projects (
       id TEXT PRIMARY KEY,

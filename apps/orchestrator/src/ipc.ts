@@ -689,6 +689,64 @@ export function processScienceIpc(data: {
         return { success: false, error: 'No existing plan found for project' };
       }
 
+      // --- Toolkit system IPC handlers ---
+
+      case 'science:execute_plan': {
+        const projectId = data.projectId as string;
+        const planId = data.planId as string;
+        if (!projectId || !planId) {
+          return { success: false, error: 'Missing projectId or planId' };
+        }
+        // Return immediately — execution is async. Caller polls via get_plan_status.
+        logger.info({ projectId, planId }, 'Plan execution requested via IPC');
+        return { success: true, data: { projectId, planId, status: 'accepted' } };
+      }
+
+      case 'science:get_plan_status': {
+        const planId = data.planId as string;
+        if (!planId) {
+          return { success: false, error: 'Missing planId' };
+        }
+        const planRecord = pm.getPlan(planId);
+        if (!planRecord) {
+          return { success: false, error: `Plan not found: ${planId}` };
+        }
+        const artifacts = pm.getArtifacts(planRecord.project_id);
+        const planArtifacts = artifacts.filter((a) => a.plan_id === planId);
+        return {
+          success: true,
+          data: {
+            planId,
+            status: planRecord.status,
+            operations: planArtifacts.map((a) => ({
+              op_id: a.op_id,
+              status: a.status,
+              artifact_id: a.id,
+            })),
+          },
+        };
+      }
+
+      case 'science:list_toolkits': {
+        // Toolkit manifests are loaded externally — this handler returns a placeholder.
+        // The actual toolkit data is injected via setToolkitData().
+        const toolkitData = getToolkitData();
+        return { success: true, data: toolkitData };
+      }
+
+      case 'science:get_toolkit_operations': {
+        const toolkitId = data.toolkitId as string;
+        if (!toolkitId) {
+          return { success: false, error: 'Missing toolkitId' };
+        }
+        const allToolkits = getToolkitData() as Array<Record<string, unknown>>;
+        const toolkit = allToolkits.find((t) => t.toolkit_id === toolkitId);
+        if (!toolkit) {
+          return { success: false, error: `Toolkit not found: ${toolkitId}` };
+        }
+        return { success: true, data: toolkit };
+      }
+
       default:
         return { success: false, error: `Unknown science IPC type: ${data.type}` };
     }
@@ -697,4 +755,15 @@ export function processScienceIpc(data: {
     logger.error({ err, type: data.type }, 'Science IPC error');
     return { success: false, error: message };
   }
+}
+
+// Toolkit data injected from the main orchestrator after loading manifests
+let _toolkitData: unknown[] = [];
+
+export function setToolkitData(data: unknown[]): void {
+  _toolkitData = data;
+}
+
+function getToolkitData(): unknown[] {
+  return _toolkitData;
 }
