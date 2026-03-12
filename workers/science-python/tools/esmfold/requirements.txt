@@ -1,0 +1,5 @@
+# ESMFold-specific dependencies
+# PyTorch is installed separately in Dockerfile with CUDA support
+numpy>=1.24
+biopython>=1.81
+# fair-esm[esmfold]  # Uncomment when building real container
