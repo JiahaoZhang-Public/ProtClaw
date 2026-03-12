@@ -7,10 +7,13 @@ Output: Predicted PDB structures with pLDDT and pTM confidence scores.
 
 from __future__ import annotations
 
+import logging
 import os
 from typing import Any
 
 from common.adapter_protocol import BaseTool, ToolResult
+
+logger = logging.getLogger(__name__)
 
 
 class ESMFoldAdapter(BaseTool):
@@ -67,66 +70,113 @@ class ESMFoldAdapter(BaseTool):
     def execute(self, params: dict[str, Any], input_dir: str, output_dir: str) -> ToolResult:
         """Execute ESMFold structure prediction.
 
-        Reads FASTA sequences from input_dir, predicts structures,
-        and writes PDB files with confidence scores to output_dir.
+        Loads the ESMFold model, folds each sequence from input FASTA files,
+        and writes predicted PDB structures with confidence scores.
         """
         fasta_files = params["fasta_files"]
         num_recycles = params["num_recycles"]
+        chunk_size = params.get("chunk_size")
+
+        # Import heavy dependencies only at execution time
+        try:
+            import torch
+            import esm
+        except ImportError as e:
+            return self.build_error_result(
+                f"Failed to import ESMFold dependencies: {e}. "
+                f"Ensure torch and fair-esm are installed."
+            )
+
+        # Check CUDA availability
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        if device == "cpu":
+            logger.warning("CUDA not available, running ESMFold on CPU (will be slow)")
+
+        # Load model
+        logger.info("Loading ESMFold model (this may take a minute on first run)...")
+        try:
+            model = esm.pretrained.esmfold_v1()
+            model = model.set_chunk_size(chunk_size) if chunk_size else model
+            model = model.eval()
+            if device == "cuda":
+                model = model.cuda()
+        except Exception as e:
+            return self.build_error_result(f"Failed to load ESMFold model: {e}")
 
         output_files = []
         all_plddt_scores: list[float] = []
         all_ptm_scores: list[float] = []
 
-        for fasta_filename in fasta_files:
-            fasta_path = os.path.join(input_dir, fasta_filename)
+        try:
+            for fasta_filename in fasta_files:
+                fasta_path = os.path.join(input_dir, fasta_filename)
 
-            if not os.path.isfile(fasta_path):
-                return self.build_error_result(f"FASTA file not found: {fasta_path}")
+                if not os.path.isfile(fasta_path):
+                    return self.build_error_result(f"FASTA file not found: {fasta_path}")
 
-            # Parse sequences from FASTA
-            sequences = _parse_fasta(fasta_path)
-            if not sequences:
-                return self.build_error_result(f"No sequences found in {fasta_filename}")
+                # Parse sequences from FASTA
+                sequences = _parse_fasta(fasta_path)
+                if not sequences:
+                    return self.build_error_result(f"No sequences found in {fasta_filename}")
 
-            for seq_name, sequence in sequences:
-                # TODO: Replace with actual ESMFold model call
-                # In production, this would:
-                #   import esm
-                #   model = esm.pretrained.esmfold_v1()
-                #   output = model.infer(sequence, num_recycles=num_recycles)
-                #   pdb_str = model.output_to_pdb(output)
-                #
-                # For now, generate stub PDB with placeholder scores.
+                for seq_name, sequence in sequences:
+                    logger.info(
+                        "Folding %s (%d residues, %d recycles)",
+                        seq_name, len(sequence), num_recycles,
+                    )
 
-                safe_name = seq_name.replace("/", "_").replace(" ", "_")[:50]
-                pdb_filename = f"{safe_name}_predicted.pdb"
-                pdb_path = os.path.join(output_dir, pdb_filename)
+                    # Run ESMFold inference
+                    try:
+                        with torch.no_grad():
+                            output = model.infer(sequence, num_recycles=num_recycles)
 
-                # Placeholder confidence scores
-                plddt = 85.0  # Stub; real model returns per-residue pLDDT
-                ptm = 0.82  # Stub; real model returns pTM score
+                        # Extract PDB string
+                        pdb_str = model.output_to_pdb(output)[0]
 
-                with open(pdb_path, "w") as f:
-                    f.write(f"REMARK   Predicted by ESMFold stub\n")
-                    f.write(f"REMARK   Sequence: {seq_name}\n")
-                    f.write(f"REMARK   pLDDT: {plddt:.1f}\n")
-                    f.write(f"REMARK   pTM: {ptm:.3f}\n")
-                    f.write(f"REMARK   Recycles: {num_recycles}\n")
-                    # Write placeholder ATOM records
-                    for i, aa in enumerate(sequence[:10]):  # First 10 residues as stub
-                        f.write(
-                            f"ATOM  {i + 1:5d}  CA  ALA A{i + 1:4d}    "
-                            f"   {i * 3.8:.3f}   0.000   0.000  1.00 {plddt:.2f}"
-                            f"           C\n"
-                        )
-                    f.write("END\n")
+                        # Extract confidence scores
+                        plddt = output["plddt"].mean().item()
+                        ptm = output["ptm"].item()
 
-                output_files.append(pdb_path)
-                all_plddt_scores.append(plddt)
-                all_ptm_scores.append(ptm)
+                    except RuntimeError as e:
+                        if "out of memory" in str(e).lower():
+                            # Try to recover GPU memory
+                            if device == "cuda":
+                                torch.cuda.empty_cache()
+                            return self.build_error_result(
+                                f"GPU out of memory for sequence {seq_name} "
+                                f"({len(sequence)} residues). Try setting chunk_size=64."
+                            )
+                        raise
 
-        avg_plddt = sum(all_plddt_scores) / len(all_plddt_scores) if all_plddt_scores else 0.0
-        avg_ptm = sum(all_ptm_scores) / len(all_ptm_scores) if all_ptm_scores else 0.0
+                    # Write PDB file
+                    safe_name = seq_name.replace("/", "_").replace(" ", "_")[:50]
+                    pdb_filename = f"{safe_name}_predicted.pdb"
+                    pdb_path = os.path.join(output_dir, pdb_filename)
+
+                    with open(pdb_path, "w") as f:
+                        f.write(pdb_str)
+
+                    output_files.append(pdb_path)
+                    all_plddt_scores.append(plddt)
+                    all_ptm_scores.append(ptm)
+
+                    logger.info(
+                        "Folded %s: pLDDT=%.1f, pTM=%.4f",
+                        seq_name, plddt, ptm,
+                    )
+
+        finally:
+            # Always free GPU memory
+            del model
+            if device == "cuda":
+                torch.cuda.empty_cache()
+            logger.info("ESMFold model unloaded, GPU memory freed")
+
+        if not output_files:
+            return self.build_error_result("No structures were predicted")
+
+        avg_plddt = sum(all_plddt_scores) / len(all_plddt_scores)
+        avg_ptm = sum(all_ptm_scores) / len(all_ptm_scores)
 
         return self.build_result(
             status="success",

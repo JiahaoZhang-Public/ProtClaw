@@ -113,25 +113,65 @@ class CandidateOpsAdapter(BaseTool):
     def _execute_cluster(
         self, params: dict[str, Any], candidates: list[dict[str, Any]], output_dir: str
     ) -> ToolResult:
-        """Cluster candidates by feature similarity."""
+        """Cluster candidates by feature similarity using KMeans."""
         feature_keys = params["feature_keys"]
         n_clusters = params["n_clusters"]
 
-        # TODO: Replace with actual scikit-learn clustering
-        # In production, this would:
-        #   from sklearn.cluster import KMeans
-        #   from sklearn.preprocessing import StandardScaler
-        #   X = np.array([[c[k] for k in feature_keys] for c in candidates])
-        #   X_scaled = StandardScaler().fit_transform(X)
-        #   kmeans = KMeans(n_clusters=n_clusters, random_state=42)
-        #   labels = kmeans.fit_predict(X_scaled)
-        #
-        # For now, assign clusters round-robin as a stub.
+        try:
+            import numpy as np
+            from sklearn.cluster import KMeans
+            from sklearn.preprocessing import StandardScaler
+        except ImportError as e:
+            # Fallback to round-robin if scikit-learn not available
+            import logging
+            logging.getLogger(__name__).warning(
+                "scikit-learn not available (%s), using round-robin fallback", e
+            )
+            clustered_candidates = []
+            for i, candidate in enumerate(candidates):
+                entry = dict(candidate)
+                entry["cluster_id"] = i % n_clusters
+                clustered_candidates.append(entry)
+
+            output_path = os.path.join(output_dir, "cluster_results.json")
+            with open(output_path, "w") as f:
+                json.dump({
+                    "mode": "cluster",
+                    "n_clusters": n_clusters,
+                    "feature_keys": feature_keys,
+                    "candidates": clustered_candidates,
+                    "method": "round_robin_fallback",
+                }, f, indent=2)
+
+            return self.build_result(
+                status="success",
+                output_files=[output_path],
+                metrics={
+                    "mode": "cluster",
+                    "n_clusters": n_clusters,
+                    "num_candidates": len(clustered_candidates),
+                    "method": "round_robin_fallback",
+                },
+            )
+
+        # Build feature matrix
+        X = np.array([
+            [float(c.get(k, 0)) for k in feature_keys]
+            for c in candidates
+        ])
+
+        # Scale features for fair distance computation
+        scaler = StandardScaler()
+        X_scaled = scaler.fit_transform(X)
+
+        # Run KMeans clustering
+        kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
+        labels = kmeans.fit_predict(X_scaled)
 
         clustered_candidates = []
         for i, candidate in enumerate(candidates):
             entry = dict(candidate)
-            entry["cluster_id"] = i % n_clusters
+            entry["cluster_id"] = int(labels[i])
             clustered_candidates.append(entry)
 
         # Write results
