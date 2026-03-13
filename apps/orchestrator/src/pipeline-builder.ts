@@ -79,7 +79,7 @@ export interface PipelineContext {
  */
 export async function executePipeline(
   toolkitName: string,
-  _params: Record<string, unknown>,
+  params: Record<string, unknown>,
   ctx: PipelineContext,
   callbacks?: DagCallbacks,
 ): Promise<DagResult> {
@@ -90,5 +90,25 @@ export async function executePipeline(
 
   const options: DagExecutorOptions = { pipelineDir: ctx.pipelineDir };
 
-  return executor.execute(dag, {}, callbacks ?? {}, options);
+  // Distribute params to DAG nodes:
+  // If params are keyed by node ID (e.g., { backbone_generate: {...} }), use as-is.
+  // Otherwise, inject flat params into the first root node(s) (nodes with no dependencies).
+  let nodeParams: Record<string, Record<string, unknown>>;
+
+  const firstKey = Object.keys(params)[0];
+  const isNodeKeyed = firstKey && dag.nodes.some(n => n.id === firstKey);
+
+  if (isNodeKeyed) {
+    nodeParams = params as Record<string, Record<string, unknown>>;
+  } else {
+    // Flat params → inject into all root nodes (no dependencies)
+    nodeParams = {};
+    for (const node of dag.nodes) {
+      if (node.dependsOn.length === 0) {
+        nodeParams[node.id] = { ...params };
+      }
+    }
+  }
+
+  return executor.execute(dag, nodeParams, callbacks ?? {}, options);
 }
