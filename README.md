@@ -1,8 +1,14 @@
-# ProtClaw
+<p align="center">
+  <img src="logo.png" alt="ProtClaw" width="400">
+</p>
 
-**Protein Design Agentic System** — LLM as CPU, Agents as System, Skills as Software, Toolkits as Pluggable Scientific Capability Packs.
+<h1 align="center">ProtClaw</h1>
 
-Built on [NanoClaw](https://github.com/qwibitai/nanoclaw) + [Anthropic Claude Agent SDK](https://platform.claude.com/docs/en/agent-sdk/overview).
+<p align="center"><strong>Protein Design Agentic System</strong> — LLM as CPU, Agents as System, Skills as Software, Toolkits as Pluggable Scientific Capability Packs.</p>
+
+<p align="center">
+Built on <a href="https://github.com/qwibitai/nanoclaw">NanoClaw</a> + <a href="https://platform.claude.com/docs/en/agent-sdk/overview">Anthropic Claude Agent SDK</a>
+</p>
 
 > Run a full de novo protein design pipeline in one command — backbone generation, sequence design, structure prediction, quality control, candidate ranking, and experiment packaging — all orchestrated by AI agents.
 
