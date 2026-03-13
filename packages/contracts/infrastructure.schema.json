@@ -1,0 +1,155 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://protclaw.dev/schemas/infrastructure.schema.json",
+  "title": "ProtClaw Infrastructure Config",
+  "description": "Environment provisioning config for a ProtClaw science skill. Agent-facing metadata (name, description, inputs, outputs) lives in SKILL.md.",
+  "type": "object",
+  "required": ["environment", "resources"],
+  "properties": {
+    "environment": {
+      "type": "object",
+      "required": ["name", "python", "backends"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Conda environment name. Skills sharing the same env name will be installed in the same environment."
+        },
+        "python": {
+          "type": "string",
+          "pattern": "^3\\.\\d+$",
+          "description": "Python version (e.g. '3.10', '3.11')"
+        },
+        "backends": {
+          "type": "object",
+          "description": "Per-backend dependency declarations. Provisioner selects the matching backend based on target compute config.",
+          "properties": {
+            "cuda": { "$ref": "#/$defs/backendDeps" },
+            "mps": { "$ref": "#/$defs/backendDeps" },
+            "cpu": { "$ref": "#/$defs/backendDeps" }
+          },
+          "minProperties": 1,
+          "additionalProperties": false
+        },
+        "patches": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/patch" },
+          "default": [],
+          "description": "Post-install patches (inline scripts or file references)"
+        }
+      },
+      "additionalProperties": false
+    },
+    "repos": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/repo" },
+      "default": [],
+      "description": "Git repositories to clone on the target"
+    },
+    "models": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/model" },
+      "default": [],
+      "description": "Model weights to download on the target"
+    },
+    "resources": {
+      "type": "object",
+      "required": ["gpu"],
+      "properties": {
+        "gpu": {
+          "type": "string",
+          "enum": ["required", "preferred", "none"],
+          "description": "required = fail without GPU; preferred = use GPU if available, fallback to CPU; none = CPU only"
+        },
+        "gpu_vram_min_gb": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Minimum GPU VRAM in GB"
+        },
+        "ram_min_gb": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Minimum system RAM in GB"
+        },
+        "estimated_runtime": {
+          "type": "object",
+          "properties": {
+            "gpu": { "type": "string" },
+            "cpu": { "type": "string" }
+          },
+          "additionalProperties": false
+        },
+        "cost_tier": {
+          "type": "string",
+          "enum": ["fast", "balanced", "expensive"]
+        }
+      },
+      "additionalProperties": false
+    },
+    "runtime_env": {
+      "type": "object",
+      "additionalProperties": { "type": "string" },
+      "default": {},
+      "description": "Environment variables set at execution time. Supports ${REPOS_DIR}, ${MODELS_DIR}, ${CACHE_DIR} templates."
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "backendDeps": {
+      "type": "object",
+      "required": ["pip"],
+      "properties": {
+        "pip": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "pip install arguments. Supports ${CUDA_WHEEL_TAG} template."
+        },
+        "editable_installs": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "Paths to pip install -e. Supports ${REPOS_DIR} template."
+        },
+        "notes": {
+          "type": "string",
+          "description": "Human-readable notes about this backend's limitations"
+        }
+      },
+      "additionalProperties": false
+    },
+    "patch": {
+      "type": "object",
+      "required": ["name", "script"],
+      "properties": {
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "script": {
+          "type": "string",
+          "description": "Inline shell script or relative path to a .sh file. Supports ${REPOS_DIR}, ${MODELS_DIR}, ${CACHE_DIR} templates."
+        }
+      },
+      "additionalProperties": false
+    },
+    "repo": {
+      "type": "object",
+      "required": ["url", "path"],
+      "properties": {
+        "url": { "type": "string", "format": "uri" },
+        "path": { "type": "string", "description": "Clone destination. Supports ${REPOS_DIR} template." },
+        "branch": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "model": {
+      "type": "object",
+      "required": ["name", "path"],
+      "properties": {
+        "name": { "type": "string" },
+        "path": { "type": "string", "description": "Download destination. Supports ${MODELS_DIR}, ${CACHE_DIR} templates." },
+        "url": { "type": "string", "format": "uri" },
+        "auto_download": { "type": "boolean", "default": false, "description": "If true, model downloads automatically on first use" },
+        "size_gb": { "type": "number" }
+      },
+      "additionalProperties": false
+    }
+  }
+}

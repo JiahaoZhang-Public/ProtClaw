@@ -1,0 +1,66 @@
+# infrastructure.yaml — ProtClaw environment provisioning config
+# Consumed by Provisioner (TS), not by AI agents.
+# Agent-facing metadata lives in SKILL.md.
+
+environment:
+  name: protclaw-esmfold
+  python: "3.10"
+  backends:
+    cuda:
+      pip:
+        - torch --index-url https://download.pytorch.org/whl/${CUDA_WHEEL_TAG}
+        - fair-esm biopython numpy omegaconf scipy
+        - "pytorch-lightning<2.0"
+        - deepspeed
+        - "dllogger @ git+https://github.com/NVIDIA/dllogger.git"
+        - ml-collections dm-tree modelcif
+    mps:
+      pip:
+        - torch
+        - fair-esm biopython numpy omegaconf scipy
+        - "pytorch-lightning<2.0"
+      notes: "MPS mode: use model.float() — MPS does not support fp16. Max ~500 residues."
+    cpu:
+      pip:
+        - torch --index-url https://download.pytorch.org/whl/cpu
+        - fair-esm biopython numpy omegaconf scipy
+        - "pytorch-lightning<2.0"
+      notes: "Very slow (~30-60 min per sequence). Recommend GPU."
+  patches:
+    - name: openfold-install
+      description: "Install openfold from repo with lazy init (skip CUDA kernel compilation)"
+      script: scripts/patches/openfold-install.sh
+    - name: openfold-attention-patch
+      description: "Replace CUDA attention kernel with pure PyTorch implementation"
+      script: scripts/patches/openfold-attention.sh
+    - name: openfold-structure-module-patch
+      description: "Handle missing attn_core_inplace_cuda gracefully"
+      script: scripts/patches/openfold-structure-module.sh
+    - name: openfold-deepspeed-patch
+      description: "Fix deepspeed.utils.is_initialized compatibility"
+      script: scripts/patches/openfold-deepspeed.sh
+    - name: torch-six-shim
+      description: "Create torch._six compatibility shim for PyTorch 2.x"
+      script: scripts/patches/torch-six-shim.sh
+
+repos:
+  - url: https://github.com/aqlaboratory/openfold.git
+    path: "${REPOS_DIR}/openfold"
+
+models:
+  - name: esmfold-v1
+    path: "${CACHE_DIR}/huggingface"
+    auto_download: true
+    size_gb: 2.5
+
+resources:
+  gpu: preferred
+  gpu_vram_min_gb: 8
+  ram_min_gb: 32
+  estimated_runtime:
+    gpu: "1-10 min per sequence"
+    cpu: "30-60 min per sequence"
+  cost_tier: balanced
+
+runtime_env:
+  HF_HOME: "${CACHE_DIR}/huggingface"

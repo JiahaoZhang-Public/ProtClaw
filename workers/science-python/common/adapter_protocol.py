@@ -13,10 +13,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import time
 from abc import ABC, abstractmethod
 from typing import Any, Protocol, runtime_checkable
+
+logger = logging.getLogger(__name__)
 
 
 class ToolResult:
@@ -163,3 +166,67 @@ class BaseTool(ABC):
         result = self.execute(params, input_dir, output_dir)
         result.duration_seconds = time.monotonic() - start
         return result
+
+
+def get_device(prefer_gpu: bool = True) -> str:
+    """Detect the best available compute device.
+
+    Returns a PyTorch device string: 'cuda', 'mps', or 'cpu'.
+
+    Priority:
+    1. CUDA (if available and prefer_gpu=True)
+    2. MPS  (Apple Silicon, if available and prefer_gpu=True)
+    3. CPU  (always available)
+
+    Respects CUDA_VISIBLE_DEVICES — if set to empty string or
+    no GPUs are visible, falls back to MPS or CPU.
+
+    Usage in adapters:
+        from common.adapter_protocol import get_device
+        device = get_device()
+        model = model.to(device)
+    """
+    if not prefer_gpu:
+        logger.info("Device: cpu (GPU not requested)")
+        return "cpu"
+
+    try:
+        import torch
+
+        # Check CUDA
+        if torch.cuda.is_available():
+            gpu_name = torch.cuda.get_device_name(0)
+            logger.info("Device: cuda (%s)", gpu_name)
+            return "cuda"
+
+        # Check MPS (Apple Silicon)
+        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            logger.info("Device: mps (Apple Silicon)")
+            return "mps"
+    except ImportError:
+        pass
+
+    logger.info("Device: cpu (no GPU detected)")
+    return "cpu"
+
+
+def get_torch_dtype(device: str) -> Any:
+    """Get the appropriate default dtype for a device.
+
+    - CUDA: float16 (fast, well-supported)
+    - MPS:  float32 (MPS has limited fp16 support)
+    - CPU:  float32
+
+    Usage in adapters:
+        device = get_device()
+        dtype = get_torch_dtype(device)
+        model = model.to(device=device, dtype=dtype)
+    """
+    try:
+        import torch
+
+        if device == "cuda":
+            return torch.float16
+        return torch.float32
+    except ImportError:
+        return None

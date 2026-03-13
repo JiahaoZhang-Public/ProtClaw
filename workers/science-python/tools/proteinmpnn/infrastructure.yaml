@@ -1,0 +1,44 @@
+# infrastructure.yaml — ProtClaw environment provisioning config
+# Consumed by Provisioner (TS), not by AI agents.
+# Agent-facing metadata lives in SKILL.md.
+
+environment:
+  name: protclaw-mpnn
+  python: "3.10"
+  backends:
+    cuda:
+      pip:
+        - torch --index-url https://download.pytorch.org/whl/${CUDA_WHEEL_TAG}
+        - numpy biopython
+    mps:
+      pip:
+        - torch
+        - numpy biopython
+    cpu:
+      pip:
+        - torch --index-url https://download.pytorch.org/whl/cpu
+        - numpy biopython
+  patches: []
+
+repos:
+  - url: https://github.com/dauparas/ProteinMPNN.git
+    path: "${REPOS_DIR}/ProteinMPNN"
+
+models:
+  - name: proteinmpnn-v48
+    path: "${MODELS_DIR}/proteinmpnn/v_48_020.pt"
+    url: https://github.com/dauparas/ProteinMPNN/raw/main/vanilla_model_weights/v_48_020.pt
+    size_gb: 0.15
+
+resources:
+  gpu: preferred
+  gpu_vram_min_gb: 4
+  ram_min_gb: 8
+  estimated_runtime:
+    gpu: "1-5 min per backbone"
+    cpu: "10-30 min per backbone"
+  cost_tier: fast
+
+runtime_env:
+  PROTEINMPNN_DIR: "${REPOS_DIR}/ProteinMPNN"
+  PROTEINMPNN_WEIGHTS: "${MODELS_DIR}/proteinmpnn"
