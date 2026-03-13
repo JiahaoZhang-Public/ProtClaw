@@ -55,6 +55,8 @@ import {
 import { startSchedulerLoop } from './task-scheduler.js';
 import { Channel, NewMessage, RegisteredGroup } from './types.js';
 import { logger } from './logger.js';
+import { bootstrapScience } from './science-bootstrap.js';
+import { getDb } from './db.js';
 
 // Re-export for backwards compatibility during refactor
 export { escapeXml, formatMessages } from './router.js';
@@ -469,6 +471,18 @@ async function main(): Promise<void> {
   ensureContainerSystemRunning();
   initDatabase();
   logger.info('Database initialized');
+
+  // Bootstrap science execution (ExecutionDispatcher, AuditLogger, ExecutionEngine → IPC)
+  try {
+    bootstrapScience({
+      db: getDb(),
+      projectDir: path.resolve(process.cwd(), '../../projects'),
+    });
+    logger.info('Science execution bootstrapped');
+  } catch (err) {
+    logger.warn({ err }, 'Science bootstrap skipped (science features disabled)');
+  }
+
   loadState();
 
   // Start credential proxy (containers route API calls through this)

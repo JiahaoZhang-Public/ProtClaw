@@ -13,15 +13,13 @@
  */
 
 import path from 'node:path';
-import fs from 'node:fs';
-import YAML from 'yaml';
 
 import { SkillRegistry } from './skill-registry.js';
 import { Provisioner } from './provisioner.js';
 import { createEngine } from './execution-engine.js';
 import { ResourceScheduler } from './resource-scheduler.js';
-import { DagExecutor } from './dag-executor.js';
 import { loadTarget, loadAllTargets } from './target-loader.js';
+import { executePipeline } from './pipeline-builder.js';
 import type { SkillRunConfig } from './dag-executor.js';
 
 /* ------------------------------------------------------------------ */
@@ -177,66 +175,26 @@ async function cmdRunSkill(): Promise<void> {
 async function cmdRunPipeline(): Promise<void> {
   const toolkitName = args[1] || 'de-novo';
   const targetName = getFlag('target');
+  const paramsStr = getFlag('params');
+  const params = paramsStr ? JSON.parse(paramsStr) : {};
 
   const target = loadTarget(targetName);
   const registry = loadRegistry();
 
-  // Load toolkit manifest
-  const toolkitDir = path.resolve(process.cwd(), '../../toolkits');
-  const manifestPath = path.join(toolkitDir, toolkitName, 'manifest.yaml');
+  console.log(`\n=== Running pipeline: ${toolkitName} on ${target.name} ===\n`);
 
-  if (!fs.existsSync(manifestPath)) {
-    console.error(`Toolkit manifest not found: ${manifestPath}`);
-    process.exit(1);
-  }
-
-  const manifest = YAML.parse(fs.readFileSync(manifestPath, 'utf-8'));
-
-  // manifest.operations is an object { opName: { tool, depends_on, ... } }
-  const operationsObj = manifest.operations as Record<string, {
-    tool?: string;
-    depends_on?: string[];
-  }>;
-  const operationNames = Object.keys(operationsObj);
-
-  console.log(`\n=== Running pipeline: ${toolkitName} on ${target.name} ===`);
-  console.log(`Operations: ${operationNames.join(' → ')}\n`);
-
-  // Map toolkit operation names to skill names (SKILL.md names, kebab-case)
-  // The ExecutionEngine.adapterModule() handles kebab→underscore for Python imports
-  const OPERATION_TO_SKILL: Record<string, string> = {
-    backbone_generate: 'rfdiffusion',
-    sequence_design: 'proteinmpnn',
-    structure_predict: 'esmfold',
-    structure_qc: 'structure-qc',
-    developability_check: 'developability',
-    candidate_cluster: 'candidate-ops',
-    candidate_rank: 'candidate-ops',
-    experiment_package: 'experiment-package',
-  };
-
-  const dag = {
-    nodes: operationNames.map(opName => {
-      const op = operationsObj[opName]!;
-      return {
-        id: opName,
-        skillName: OPERATION_TO_SKILL[opName] ?? op.tool ?? opName,
-        dependsOn: op.depends_on ?? [],
-      };
-    }),
-  };
-
-  // Create execution components
   const scheduler = new ResourceScheduler(target);
   const engine = createEngine(target, registry, WORKERS_DIR);
-  const executor = new DagExecutor(scheduler, engine, registry);
 
   console.log(`Schedule: ${scheduler.strategy.mode} (GPU:${scheduler.strategy.gpuConcurrency}, CPU:${scheduler.strategy.cpuConcurrency})\n`);
 
-  // Use pipeline mode with file routing
-  const pipelineDir = path.resolve(process.cwd(), '../../projects/_pipelines');
-
-  const result = await executor.execute(dag, {}, {
+  const result = await executePipeline(toolkitName, params, {
+    engine,
+    registry,
+    scheduler,
+    toolkitDir: path.resolve(process.cwd(), '../../toolkits'),
+    pipelineDir: path.resolve(process.cwd(), '../../projects/_pipelines'),
+  }, {
     onNodeStart: (nodeId, skillName, resources) => {
       const device = resources.gpuId >= 0 ? `GPU:${resources.gpuId}` : 'CPU';
       console.log(`▶ ${nodeId} (${skillName}) started on ${device}`);
@@ -247,7 +205,7 @@ async function cmdRunPipeline(): Promise<void> {
     onNodeFailed: (nodeId, error) => {
       console.error(`✗ ${nodeId} failed: ${error}`);
     },
-  }, { pipelineDir });
+  });
 
   const completedNodes = [...result.nodeResults.keys()];
   console.log(`\n=== Pipeline ${result.status} (${result.durationSeconds.toFixed(1)}s) ===`);
