@@ -39,6 +39,17 @@ export interface DagNode {
   skillName: string;
   /** IDs of nodes that must complete before this one starts. */
   dependsOn: string[];
+  /**
+   * Default params from manifest (e.g., input defaults, operation-specific params).
+   * Merged into node params before execution — user params take precedence.
+   */
+  defaultParams?: Record<string, unknown>;
+  /**
+   * Per-dependency file routing overrides.
+   * Maps source node ID → { format → param name } to override generic FORMAT_PARAM_MAP.
+   * Example: { "structure_predict": { "pdb": "predicted_pdb" } }
+   */
+  sourceParamOverrides?: Record<string, Record<string, string>>;
 }
 
 export interface PipelineDAG {
@@ -184,12 +195,26 @@ function routeFiles(
  * Special handling for adapters that use singular params:
  * - developability expects `fasta_file` (singular string), not `fasta_files`
  * - structure_qc expects `predicted_pdb` and `designed_pdb` (singular strings)
+ *
+ * @param overrides - Per-source format→param overrides (e.g., { pdb: "predicted_pdb" })
+ *   When provided, these override the default FORMAT_PARAM_MAP for this specific source.
+ *   Used for source-aware routing (e.g., ESMFold PDBs → predicted_pdb, RFdiffusion PDBs → designed_pdb).
  */
 function injectFileParams(
   params: Record<string, unknown>,
   filesByFormat: Map<string, string[]>,
+  overrides?: Record<string, string>,
 ): void {
   for (const [format, files] of filesByFormat) {
+    // Check for source-specific override first
+    const overrideKey = overrides?.[format];
+    if (overrideKey) {
+      if (!(overrideKey in params) && files.length > 0) {
+        params[overrideKey] = files[0]; // Override params are always singular
+      }
+      continue; // Skip generic injection when override is defined
+    }
+
     const listKey = FORMAT_PARAM_MAP[format];
     if (!listKey) continue;
 
@@ -446,11 +471,14 @@ export class DagExecutor {
         ? path.join(pipelineDir, node.id)
         : undefined;
 
+      // Merge default params from manifest (user/routed params take precedence)
+      const mergedParams = { ...(node.defaultParams ?? {}), ...params };
+
       // Execute skill
       const result = await this.engine.execute({
         skillName: skill.name,
         nodeId: node.id,
-        params,
+        params: mergedParams,
         gpuId: resources.gpuId,
         isCpuFallback: resources.isCpuFallback,
         workDir: nodeWorkDir,
@@ -496,7 +524,10 @@ export class DagExecutor {
 
       // Route files by format
       const filesByFormat = routeFiles(sourceDir, targetDir);
-      injectFileParams(depParams, filesByFormat);
+
+      // Use source-aware param overrides if defined on the dependent node
+      const overrides = depNode.sourceParamOverrides?.[completedNode.id];
+      injectFileParams(depParams, filesByFormat, overrides);
 
       // Inject upstream metrics as _upstream_results
       const upstream = (depParams._upstream_results as Record<string, unknown>) ?? {};

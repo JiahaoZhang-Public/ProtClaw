@@ -32,11 +32,45 @@ export const OPERATION_TO_SKILL: Record<string, string> = {
 /*  DAG construction from manifest                                     */
 /* ------------------------------------------------------------------ */
 
+export interface ManifestInput {
+  type: string;
+  format?: string;
+  required?: boolean;
+  default?: unknown;
+  description?: string;
+}
+
 export interface ManifestOperation {
   tool?: string;
   depends_on?: string[];
+  inputs?: Record<string, ManifestInput>;
   [key: string]: unknown;
 }
+
+/**
+ * Well-known operation-specific default params.
+ * Injected when the manifest operation name implies a mode
+ * that the underlying tool needs but the manifest doesn't explicitly pass.
+ */
+const OPERATION_DEFAULTS: Record<string, Record<string, unknown>> = {
+  candidate_cluster: { mode: 'cluster' },
+  candidate_rank: { mode: 'rank' },
+};
+
+/**
+ * Source-aware file routing overrides.
+ * Maps downstream operation → { source operation → { format → param name } }.
+ *
+ * Allows different upstream sources to inject files under different param names.
+ * Example: structure_qc depends on both structure_predict and backbone_generate.
+ * PDBs from structure_predict → `predicted_pdb`, from backbone_generate → `designed_pdb`.
+ */
+const SOURCE_PARAM_OVERRIDES: Record<string, Record<string, Record<string, string>>> = {
+  structure_qc: {
+    structure_predict: { pdb: 'predicted_pdb' },
+    backbone_generate: { pdb: 'designed_pdb' },
+  },
+};
 
 /**
  * Build a PipelineDAG from a toolkit manifest YAML file.
@@ -53,10 +87,29 @@ export function buildDagFromManifest(manifestPath: string): PipelineDAG {
   return {
     nodes: operationNames.map(opName => {
       const op = operationsObj[opName]!;
+
+      // Collect default values from manifest inputs
+      const inputDefaults: Record<string, unknown> = {};
+      if (op.inputs) {
+        for (const [paramName, input] of Object.entries(op.inputs as Record<string, ManifestInput>)) {
+          if (input.default !== undefined) {
+            inputDefaults[paramName] = input.default;
+          }
+        }
+      }
+
+      // Merge with well-known operation defaults
+      const defaultParams = {
+        ...inputDefaults,
+        ...(OPERATION_DEFAULTS[opName] ?? {}),
+      };
+
       return {
         id: opName,
         skillName: OPERATION_TO_SKILL[opName] ?? op.tool ?? opName,
         dependsOn: op.depends_on ?? [],
+        defaultParams: Object.keys(defaultParams).length > 0 ? defaultParams : undefined,
+        sourceParamOverrides: SOURCE_PARAM_OVERRIDES[opName],
       };
     }),
   };
