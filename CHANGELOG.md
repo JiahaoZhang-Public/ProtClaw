@@ -4,7 +4,7 @@ All notable changes to ProtClaw are documented in this file.
 
 ## [0.2.0] - 2026-03-13
 
-**Agent Skill Execution** — Agents in containers can invoke science skills via IPC.
+**Agent-First Protein Design** — Full E2E agent pipeline verified. Single-agent system with natural language interface for de novo protein design.
 
 ### Added
 
@@ -13,11 +13,20 @@ All notable changes to ProtClaw are documented in this file.
 - **Shared pipeline builder** (`pipeline-builder.ts`): extracted DAG construction + execution logic used by both CLI and agent IPC paths
 - **Science bootstrap wiring**: `bootstrapScience()` now creates ExecutionEngine, SkillRegistry, ResourceScheduler and injects them as IPC singletons
 - **Toolkit data injection**: `list_toolkits` MCP tool now returns full manifest data (was empty in v0.1.0)
+- **Comprehensive README**: architecture diagram, agent-first getting started (Claude Code `/setup`), skill/toolkit extension guide, usage guide, roadmap
+- **Project logo**: ProtClaw branding (mechanical claw + protein helix)
+
+### Fixed
+
+- **Source-aware DAG file routing**: `structure_qc` now correctly receives `predicted_pdb` from ESMFold and `designed_pdb` from RFdiffusion via `sourceParamOverrides`
+- **Candidate rank upstream data**: `candidate_rank` now reads `cluster_results.json` from `candidate_cluster` output (was failing because it only looked for raw `developability_report.json`/`qc_report.json`)
+- **User params propagation**: pipeline root node params (e.g., `contigs`, `num_designs`) now correctly injected from user input
+- **Operation defaults**: manifest input defaults (e.g., `num_seqs_per_structure: 8`, `num_recycles: 4`) now auto-applied to DAG nodes
 
 ### Verified
 
-- Full E2E flow: CLI message → Orchestrator → Docker container (Claude Agent SDK) → MCP tool call → IPC → skill execution → response
-- Agent successfully queries toolkit manifests and skill metadata via IPC
+- Full E2E agent pipeline: CLI channel → Orchestrator → Docker container (Claude Agent SDK) → MCP `run_pipeline` → IPC → 8-step DAG on GPUHub → results back to agent → scientific report to user (~253s total)
+- All 8 de novo pipeline steps succeed end-to-end (previously Steps 7–8 failed)
 - CLI pipeline execution preserved (refactored to use shared `pipeline-builder.ts`)
 
 ## [0.1.0] - 2026-03-13
