@@ -2,7 +2,25 @@
 
 All notable changes to ProtClaw are documented in this file.
 
-## [0.1.0] - 2025-03-13
+## [0.2.0] - 2026-03-13
+
+**Agent Skill Execution** — Agents in containers can invoke science skills via IPC.
+
+### Added
+
+- **MCP tools for agents**: `execute_skill` (single skill, 10 min timeout) and `run_pipeline` (full DAG, 30 min timeout) available to Claude Agent SDK containers
+- **IPC handlers**: `science:execute_skill` and `science:run_pipeline` on orchestrator side with async processing for long-running GPU operations
+- **Shared pipeline builder** (`pipeline-builder.ts`): extracted DAG construction + execution logic used by both CLI and agent IPC paths
+- **Science bootstrap wiring**: `bootstrapScience()` now creates ExecutionEngine, SkillRegistry, ResourceScheduler and injects them as IPC singletons
+- **Toolkit data injection**: `list_toolkits` MCP tool now returns full manifest data (was empty in v0.1.0)
+
+### Verified
+
+- Full E2E flow: CLI message → Orchestrator → Docker container (Claude Agent SDK) → MCP tool call → IPC → skill execution → response
+- Agent successfully queries toolkit manifests and skill metadata via IPC
+- CLI pipeline execution preserved (refactored to use shared `pipeline-builder.ts`)
+
+## [0.1.0] - 2026-03-13
 
 **CLI Pipeline Execution** — First functional milestone.
 
