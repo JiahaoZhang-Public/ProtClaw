@@ -1,12 +1,15 @@
 # De Novo Protein Design Toolkit Manifest
 # This toolkit defines the golden path for de novo protein design.
 #
-# V1 operations: backbone_generate -> sequence_design -> structure_predict
+# Pipeline: backbone_generate -> sequence_design -> structure_predict
 #   -> structure_qc -> developability_check -> candidate_cluster
 #   -> candidate_rank -> experiment_package
+#
+# Input key names MUST match Python adapter param names exactly,
+# because FileRouter injects params by these key names.
 
 name: de-novo-design
-version: "0.1.0"
+version: "0.2.0"
 description: "De novo protein backbone and sequence design toolkit"
 task_types:
   - de_novo_design
@@ -16,7 +19,6 @@ operations:
   backbone_generate:
     tool: rfdiffusion
     description: "Generate protein backbones using RFdiffusion"
-    docker_image: protclaw/rfdiffusion:latest
     gpu_required: true
     inputs:
       contigs:
@@ -45,27 +47,25 @@ operations:
   sequence_design:
     tool: proteinmpnn
     description: "Design sequences for given backbones using ProteinMPNN"
-    docker_image: protclaw/proteinmpnn:latest
     gpu_required: true
     depends_on:
       - backbone_generate
     inputs:
-      backbone_pdb:
-        type: file
+      # Key name matches ProteinMPNN adapter's expected param: pdb_files (list)
+      pdb_files:
+        type: file_list
         format: pdb
         required: true
-      num_sequences:
+        description: "Backbone PDB files from RFdiffusion"
+      num_seqs_per_structure:
         type: integer
         default: 8
-      temperature:
+      sampling_temp:
         type: float
         default: 0.1
-      fixed_positions:
-        type: string
-        required: false
     outputs:
-      sequences:
-        type: file
+      designed_sequences:
+        type: file_list
         format: fasta
       scores:
         type: json
@@ -76,18 +76,22 @@ operations:
   structure_predict:
     tool: esmfold
     description: "Predict 3D structure from sequence using ESMFold"
-    docker_image: protclaw/esmfold:latest
     gpu_required: true
     depends_on:
       - sequence_design
     inputs:
-      sequence:
-        type: string
-        format: amino_acid
+      # Key name matches ESMFold adapter's expected param: fasta_files (list)
+      fasta_files:
+        type: file_list
+        format: fasta
         required: true
+        description: "FASTA files with designed sequences"
+      num_recycles:
+        type: integer
+        default: 4
     outputs:
-      predicted_pdb:
-        type: file
+      predicted_structures:
+        type: file_list
         format: pdb
       plddt_scores:
         type: json
@@ -100,19 +104,22 @@ operations:
   structure_qc:
     tool: structure-qc
     description: "Assess structural quality (RMSD, clashes, Ramachandran)"
-    docker_image: protclaw/structure-qc:latest
     gpu_required: false
     depends_on:
       - structure_predict
+      - backbone_generate
     inputs:
+      # Key names match structure_qc adapter's expected params
       predicted_pdb:
         type: file
         format: pdb
         required: true
-      template_pdb:
+        description: "Predicted PDB from ESMFold"
+      designed_pdb:
         type: file
         format: pdb
-        required: false
+        required: true
+        description: "Original backbone PDB from RFdiffusion"
     outputs:
       qc_report:
         type: json
@@ -123,19 +130,16 @@ operations:
   developability_check:
     tool: developability
     description: "Check solubility, aggregation risk, expression host compatibility"
-    docker_image: protclaw/developability:latest
     gpu_required: false
     depends_on:
-      - structure_predict
+      - sequence_design
     inputs:
-      sequence:
-        type: string
-        format: amino_acid
-        required: true
-      predicted_pdb:
+      # Key name matches developability adapter's expected param: fasta_file (single)
+      fasta_file:
         type: file
-        format: pdb
-        required: false
+        format: fasta
+        required: true
+        description: "FASTA file with designed sequences"
     outputs:
       developability_report:
         type: json
@@ -146,7 +150,6 @@ operations:
   candidate_cluster:
     tool: candidate-ops
     description: "Cluster candidates for diversity and de-duplication"
-    docker_image: protclaw/candidate-ops:latest
     gpu_required: false
     depends_on:
       - structure_qc
@@ -154,7 +157,7 @@ operations:
     inputs:
       candidates:
         type: json
-        description: "List of candidate IDs with sequences/structures"
+        description: "List of candidate dicts with scores (auto-assembled from upstream)"
         required: true
     outputs:
       clusters:
@@ -166,7 +169,6 @@ operations:
   candidate_rank:
     tool: candidate-ops
     description: "Evidence-driven multi-objective ranking (Pareto)"
-    docker_image: protclaw/candidate-ops:latest
     gpu_required: false
     depends_on:
       - candidate_cluster
@@ -187,20 +189,18 @@ operations:
   experiment_package:
     tool: experiment-package
     description: "Generate experiment-ready candidate cards with assay recommendations"
-    docker_image: protclaw/experiment-package:latest
     gpu_required: false
     depends_on:
       - candidate_rank
     inputs:
-      selected_candidates:
+      candidates:
         type: json
         required: true
-      project_metadata:
-        type: json
-        required: true
+        description: "Ranked candidates list (auto-passed from candidate_rank)"
+      project_name:
+        type: string
+        default: "ProtClaw Design"
     outputs:
-      candidate_cards:
-        type: json
       order_sheet:
         type: file
         format: csv

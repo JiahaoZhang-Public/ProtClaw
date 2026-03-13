@@ -33,9 +33,13 @@ import { createExecutor, inferPaths } from './shell-executor.js';
 /**
  * Convert a skill name to its Python adapter module path.
  * Convention: tools/{skillName}/adapter → tools.{skillName}.adapter
+ *
+ * SKILL.md uses kebab-case names (e.g., structure-qc) but Python
+ * directories use underscores (structure_qc). Convert here so
+ * importlib.import_module() works correctly.
  */
 function adapterModule(skillName: string): string {
-  return `tools.${skillName}.adapter`;
+  return `tools.${skillName.replace(/-/g, '_')}.adapter`;
 }
 
 /* ------------------------------------------------------------------ */
@@ -64,8 +68,9 @@ export class LocalExecutionEngine implements ExecutionEngine {
     const startTime = Date.now();
     const runId = crypto.randomUUID().slice(0, 8);
 
-    // Create local workdir
-    const workdir = path.join(this.paths.cache, 'runs', `${config.nodeId}-${runId}`);
+    // Use caller-provided workdir (pipeline mode) or create a temp one
+    const managed = !config.workDir;
+    const workdir = config.workDir ?? path.join(this.paths.cache, 'runs', `${config.nodeId}-${runId}`);
     const inputDir = path.join(workdir, 'input');
     const outputDir = path.join(workdir, 'output');
     fs.mkdirSync(path.join(inputDir, 'files'), { recursive: true });
@@ -114,11 +119,13 @@ export class LocalExecutionEngine implements ExecutionEngine {
     // Read result.json
     const result = this.readResult(outputDir, config, startTime, shellResult.stdout, shellResult.stderr);
 
-    // Cleanup workdir (fire-and-forget)
-    try {
-      fs.rmSync(workdir, { recursive: true, force: true });
-    } catch {
-      // ignore cleanup failure
+    // Only cleanup if we created the workdir (not in pipeline mode)
+    if (managed) {
+      try {
+        fs.rmSync(workdir, { recursive: true, force: true });
+      } catch {
+        // ignore cleanup failure
+      }
     }
 
     return result;
@@ -188,8 +195,9 @@ export class SshExecutionEngine implements ExecutionEngine {
     const startTime = Date.now();
     const runId = crypto.randomUUID().slice(0, 8);
 
-    // Local temp dirs for staging
-    const localWorkdir = path.join(
+    // Use caller-provided workdir (pipeline mode) or create temp staging
+    const managed = !config.workDir;
+    const localWorkdir = config.workDir ?? path.join(
       process.env.HOME ?? '/tmp',
       '.protclaw', 'staging', `${config.nodeId}-${runId}`,
     );
@@ -280,11 +288,13 @@ export class SshExecutionEngine implements ExecutionEngine {
       // Cleanup remote run dir (fire-and-forget)
       this.shellExecutor.exec(`rm -rf ${remoteRunDir}`, { timeout: 15_000 }).catch(() => {});
 
-      // Cleanup local staging
-      try {
-        fs.rmSync(localWorkdir, { recursive: true, force: true });
-      } catch {
-        // ignore
+      // Only cleanup local staging if we created it (not in pipeline mode)
+      if (managed) {
+        try {
+          fs.rmSync(localWorkdir, { recursive: true, force: true });
+        } catch {
+          // ignore
+        }
       }
     }
   }

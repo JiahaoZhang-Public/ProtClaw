@@ -2,11 +2,10 @@
  * Science Execution Bootstrap for ProtClaw
  *
  * Initializes the science execution infrastructure:
- * - Chooses runner (Docker or SSH) based on SCIENCE_RUNNER env var
- * - Creates ScienceQueue with appropriate concurrency limits
- * - Creates ScienceCache
- * - Creates ToolkitLoader
- * - Creates ExecutionDispatcher and AuditLogger
+ * - Loads target config from .protclaw/targets.yaml
+ * - Auto-infers runner type and concurrency from target hardware
+ * - Creates ScienceQueue with hardware-appropriate limits
+ * - Creates ScienceCache, ToolkitLoader, ExecutionDispatcher, AuditLogger
  * - Wires everything into the IPC layer via setExecutionDispatcher/setAuditLogger
  *
  * Call bootstrapScience() during app startup after database init.
@@ -23,6 +22,8 @@ import { ProjectManager } from './project-manager.js';
 import { runScienceContainer } from './science-runner.js';
 import { runSshScience } from './ssh-science-runner.js';
 import { setExecutionDispatcher, setAuditLogger } from './ipc.js';
+import { loadTarget } from './target-loader.js';
+import { ResourceScheduler } from './resource-scheduler.js';
 
 export interface ScienceBootstrapConfig {
   /** SQLite database instance (from better-sqlite3) */
@@ -54,11 +55,26 @@ export function bootstrapScience(config: ScienceBootstrapConfig): {
   const runnerType = process.env.SCIENCE_RUNNER || 'docker';
   const runner = runnerType === 'ssh' ? runSshScience : runScienceContainer;
 
-  // 2. Configure queue concurrency based on runner type
-  //    SSH: 3 GPU slots (4 GPUs, 1 reserved), 4 CPU slots
-  //    Docker: 1 GPU slot, 4 CPU slots
-  const maxGpu = runnerType === 'ssh' ? 3 : 1;
-  const maxCpu = 4;
+  // 2. Auto-infer concurrency from target hardware
+  let maxGpu: number;
+  let maxCpu: number;
+
+  if (runnerType === 'ssh') {
+    try {
+      const target = loadTarget(process.env.SSH_TARGET);
+      const strategy = ResourceScheduler.inferStrategy(target);
+      maxGpu = target.scheduling?.max_gpu_concurrent ?? strategy.gpuConcurrency;
+      maxCpu = target.scheduling?.max_cpu_concurrent ?? strategy.cpuConcurrency;
+    } catch {
+      // Fallback if no targets.yaml found
+      maxGpu = 3;
+      maxCpu = 4;
+    }
+  } else {
+    // Docker: conservative defaults
+    maxGpu = 1;
+    maxCpu = 4;
+  }
 
   const queue = new ScienceQueue(maxGpu, maxCpu, runner);
 

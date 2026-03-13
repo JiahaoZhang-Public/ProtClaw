@@ -34,6 +34,7 @@ class ExperimentPackageAdapter(BaseTool):
 
         Required:
             candidates: list[dict] - Ranked candidate data with sequences and scores
+                (or auto-constructed from _upstream_results if not provided)
 
         Optional:
             project_name: str - Project name for report header (default: "ProtClaw Design")
@@ -44,15 +45,14 @@ class ExperimentPackageAdapter(BaseTool):
         validated = dict(self.DEFAULTS)
         validated.update(params)
 
-        # Required: candidates
+        # candidates: may be auto-populated in execute() from upstream results
         candidates = validated.get("candidates")
-        if not candidates or not isinstance(candidates, list):
-            raise ValueError("'candidates' is required and must be a non-empty list")
-        for i, c in enumerate(candidates):
-            if not isinstance(c, dict):
-                raise ValueError(f"candidates[{i}] must be a dict")
-            if "sequence" not in c:
-                raise ValueError(f"candidates[{i}] must have a 'sequence' field")
+        if candidates is not None:
+            if not isinstance(candidates, list):
+                raise ValueError("'candidates' must be a list")
+            for i, c in enumerate(candidates):
+                if not isinstance(c, dict):
+                    raise ValueError(f"candidates[{i}] must be a dict")
 
         # Validate top_n
         top_n = int(validated["top_n"])
@@ -67,8 +67,38 @@ class ExperimentPackageAdapter(BaseTool):
         return validated
 
     def execute(self, params: dict[str, Any], input_dir: str, output_dir: str) -> ToolResult:
-        """Generate experiment order package."""
-        candidates = params["candidates"]
+        """Generate experiment order package.
+
+        In pipeline mode, reads ranked candidates from upstream results
+        or from rank_results.json in input_dir.
+        """
+        candidates = params.get("candidates")
+
+        # Auto-construct from upstream results or input JSON files
+        if not candidates:
+            # Try reading rank_results.json from input dir
+            rank_path = os.path.join(input_dir, "rank_results.json")
+            if os.path.isfile(rank_path):
+                try:
+                    with open(rank_path) as f:
+                        rank_data = json.load(f)
+                    candidates = rank_data.get("candidates", [])
+                except (json.JSONDecodeError, OSError):
+                    pass
+
+            # Try upstream results
+            if not candidates:
+                upstream = params.get("_upstream_results", {})
+                for node_data in upstream.values():
+                    metrics = node_data.get("metrics", {}) if isinstance(node_data, dict) else {}
+                    if "candidates" in metrics:
+                        candidates = metrics["candidates"]
+                        break
+
+        if not candidates:
+            return self.build_error_result(
+                "No candidates provided and could not find them in upstream results"
+            )
         project_name = params["project_name"]
         scientist_name = params["scientist_name"]
         top_n = params["top_n"]

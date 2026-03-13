@@ -5,14 +5,25 @@
  * 1. Parses a pipeline DAG and finds nodes with satisfied dependencies
  * 2. Acquires resources via ResourceScheduler (GPU waits, CPU immediate)
  * 3. Executes skill via ExecutionEngine
- * 4. On completion: releases resources, triggers downstream nodes
- * 5. Repeats until all nodes complete or a critical failure occurs
+ * 4. Routes output files from completed nodes to dependent nodes
+ * 5. On completion: releases resources, triggers downstream nodes
+ * 6. Repeats until all nodes complete or a critical failure occurs
  *
  * Different hardware automatically gets different behavior:
  * - 4 GPU: GPU tasks can overlap if DAG allows
  * - 1 GPU: GPU tasks queue serially; CPU tasks run in parallel
  * - CPU-only: everything in CPU pool, gpu:preferred skills fallback
+ *
+ * Pipeline file routing (new):
+ * - Each node gets a stable workdir under a pipeline-level directory
+ * - After a node completes, its output files are copied to dependent nodes' input dirs
+ * - File params are injected into downstream nodes by extension convention
+ * - Upstream metrics are passed as _upstream_results for JSON-to-JSON transitions
  */
+
+import fs from 'node:fs';
+import path from 'node:path';
+import crypto from 'node:crypto';
 
 import type { ResourceScheduler, AcquiredResources } from './resource-scheduler.js';
 import type { SkillRegistry } from './skill-registry.js';
@@ -40,6 +51,12 @@ export interface SkillRunConfig {
   params: Record<string, unknown>;
   gpuId: number;
   isCpuFallback: boolean;
+  /**
+   * If provided, the execution engine uses this as the workdir instead of
+   * creating a temp directory. The engine will NOT clean up this directory.
+   * Used by DagExecutor for pipeline-level file routing between nodes.
+   */
+  workDir?: string;
 }
 
 export interface SkillRunResult {
@@ -68,7 +85,126 @@ export interface DagResult {
   durationSeconds: number;
 }
 
+export interface DagExecutorOptions {
+  /**
+   * Base directory for pipeline workdirs. If set, DagExecutor manages
+   * per-node workdirs and routes files between nodes automatically.
+   * If not set, each node manages its own temp workdir (no file routing).
+   */
+  pipelineDir?: string;
+}
+
 type NodeStatus = 'pending' | 'running' | 'completed' | 'failed';
+
+/* ------------------------------------------------------------------ */
+/*  PipelineFileRouter — convention-based file routing                  */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Format → param key mapping.
+ * When routing files from upstream to downstream, we inject file references
+ * into the downstream params using these key names (matching adapter conventions).
+ */
+const FORMAT_PARAM_MAP: Record<string, string> = {
+  pdb: 'pdb_files',
+  fasta: 'fasta_files',
+  json: 'json_files',
+  csv: 'csv_files',
+};
+
+/**
+ * Detect file format from extension.
+ */
+function detectFormat(filename: string): string | null {
+  const ext = path.extname(filename).toLowerCase().slice(1);
+  switch (ext) {
+    case 'pdb': return 'pdb';
+    case 'fasta':
+    case 'fa':
+    case 'faa':
+      return 'fasta';
+    case 'json': return 'json';
+    case 'csv': return 'csv';
+    case 'html':
+    case 'htm':
+      return 'html';
+    case 'xlsx': return 'xlsx';
+    default: return null;
+  }
+}
+
+/**
+ * Route output files from a completed node to a dependent node's input dir.
+ * Returns the list of files copied (basenames).
+ */
+function routeFiles(
+  sourceOutputDir: string,
+  targetInputDir: string,
+): Map<string, string[]> {
+  const sourceFilesDir = path.join(sourceOutputDir, 'output', 'files');
+  const targetFilesDir = path.join(targetInputDir, 'input', 'files');
+
+  const filesByFormat = new Map<string, string[]>();
+
+  if (!fs.existsSync(sourceFilesDir)) return filesByFormat;
+
+  const files = fs.readdirSync(sourceFilesDir);
+  if (files.length === 0) return filesByFormat;
+
+  fs.mkdirSync(targetFilesDir, { recursive: true });
+
+  for (const file of files) {
+    const format = detectFormat(file);
+    if (!format) continue;
+
+    const src = path.join(sourceFilesDir, file);
+    const dst = path.join(targetFilesDir, file);
+
+    // Don't overwrite if already exists (earlier dependency may have routed same format)
+    if (!fs.existsSync(dst)) {
+      fs.copyFileSync(src, dst);
+    }
+
+    const list = filesByFormat.get(format) ?? [];
+    list.push(file);
+    filesByFormat.set(format, list);
+  }
+
+  return filesByFormat;
+}
+
+/**
+ * Inject file references into node params based on format conventions.
+ *
+ * Rules:
+ * - Multiple files of same format → array param (e.g., pdb_files: ["a.pdb", "b.pdb"])
+ * - Single file → still array for list params, single string for singular params
+ * - Does NOT overwrite existing params (user-provided params take precedence)
+ *
+ * Special handling for adapters that use singular params:
+ * - developability expects `fasta_file` (singular string), not `fasta_files`
+ * - structure_qc expects `predicted_pdb` and `designed_pdb` (singular strings)
+ */
+function injectFileParams(
+  params: Record<string, unknown>,
+  filesByFormat: Map<string, string[]>,
+): void {
+  for (const [format, files] of filesByFormat) {
+    const listKey = FORMAT_PARAM_MAP[format];
+    if (!listKey) continue;
+
+    // Only inject if not already set by user or earlier routing
+    if (!(listKey in params)) {
+      params[listKey] = files;
+    }
+
+    // Also set singular form for adapters that expect it
+    const singularKey = listKey.replace(/_files$/, '_file');
+    if (singularKey !== listKey && !(singularKey in params) && files.length > 0) {
+      params[singularKey] = files[0];
+    }
+  }
+}
 
 /* ------------------------------------------------------------------ */
 /*  DagState — tracks node lifecycle                                   */
@@ -109,6 +245,18 @@ class DagState {
       }
     }
     return ready;
+  }
+
+  getNode(nodeId: string): DagNode | undefined {
+    return this.nodeMap.get(nodeId);
+  }
+
+  getDependents(nodeId: string): string[] {
+    return this.dependents.get(nodeId) ?? [];
+  }
+
+  getResult_forNode(nodeId: string): SkillRunResult | undefined {
+    return this.results.get(nodeId);
   }
 
   markRunning(nodeId: string): void {
@@ -182,23 +330,43 @@ export class DagExecutor {
   ) {}
 
   /**
-   * Execute a pipeline DAG with automatic resource scheduling.
+   * Execute a pipeline DAG with automatic resource scheduling and file routing.
    *
    * Algorithm:
-   * 1. Find all nodes with no unsatisfied dependencies
-   * 2. For each ready node: acquire resources (may wait for GPU)
-   * 3. Execute skill via engine
-   * 4. On completion: release resources, find newly ready nodes
-   * 5. Repeat until all nodes are done
+   * 1. Create pipeline-level workdir (if pipelineDir option set)
+   * 2. Find all nodes with no unsatisfied dependencies
+   * 3. For each ready node: acquire resources (may wait for GPU)
+   * 4. Execute skill via engine (using per-node workdir for file routing)
+   * 5. On completion: route output files to downstream nodes, inject params
+   * 6. Release resources, find newly ready nodes
+   * 7. Repeat until all nodes are done
+   * 8. Clean up pipeline workdir
    */
   async execute(
     pipeline: PipelineDAG,
     params: Record<string, Record<string, unknown>>,
     callbacks?: DagCallbacks,
+    options?: DagExecutorOptions,
   ): Promise<DagResult> {
     const startTime = Date.now();
     const state = new DagState(pipeline);
     const running = new Map<string, Promise<void>>();
+
+    // Create pipeline-level workdir for file routing
+    const pipelineId = crypto.randomUUID().slice(0, 8);
+    const pipelineDir = options?.pipelineDir
+      ? path.join(options.pipelineDir, `pipeline-${pipelineId}`)
+      : undefined;
+
+    if (pipelineDir) {
+      fs.mkdirSync(pipelineDir, { recursive: true });
+    }
+
+    // Mutable params map — we'll inject file params into these
+    const nodeParams = new Map<string, Record<string, unknown>>();
+    for (const node of pipeline.nodes) {
+      nodeParams.set(node.id, { ...(params[node.id] ?? {}) });
+    }
 
     // Validate all skills exist
     for (const node of pipeline.nodes) {
@@ -208,34 +376,47 @@ export class DagExecutor {
       }
     }
 
-    // Event loop: keep launching ready nodes until everything is done
-    while (!state.isComplete()) {
-      const readyNodes = state.getReadyNodes();
+    try {
+      // Event loop: keep launching ready nodes until everything is done
+      while (!state.isComplete()) {
+        const readyNodes = state.getReadyNodes();
 
-      // Launch all ready nodes
-      for (const node of readyNodes) {
-        state.markRunning(node.id);
+        // Launch all ready nodes
+        for (const node of readyNodes) {
+          state.markRunning(node.id);
 
-        const promise = this.launchNode(
-          node,
-          params[node.id] ?? {},
-          state,
-          callbacks,
-        ).then(() => {
-          running.delete(node.id);
-        });
+          const promise = this.launchNode(
+            node,
+            nodeParams.get(node.id) ?? {},
+            state,
+            nodeParams,
+            pipelineDir,
+            callbacks,
+          ).then(() => {
+            running.delete(node.id);
+          });
 
-        running.set(node.id, promise);
+          running.set(node.id, promise);
+        }
+
+        // If nothing is running and nothing is ready, we're stuck
+        if (running.size === 0 && readyNodes.length === 0) {
+          break;
+        }
+
+        // Wait for at least one running node to complete before checking again
+        if (running.size > 0) {
+          await Promise.race(running.values());
+        }
       }
-
-      // If nothing is running and nothing is ready, we're stuck (shouldn't happen with valid DAG)
-      if (running.size === 0 && readyNodes.length === 0) {
-        break;
-      }
-
-      // Wait for at least one running node to complete before checking again
-      if (running.size > 0) {
-        await Promise.race(running.values());
+    } finally {
+      // Clean up pipeline workdir
+      if (pipelineDir) {
+        try {
+          fs.rmSync(pipelineDir, { recursive: true, force: true });
+        } catch {
+          // ignore
+        }
       }
     }
 
@@ -248,6 +429,8 @@ export class DagExecutor {
     node: DagNode,
     params: Record<string, unknown>,
     state: DagState,
+    nodeParams: Map<string, Record<string, unknown>>,
+    pipelineDir: string | undefined,
     callbacks?: DagCallbacks,
   ): Promise<void> {
     const skill = this.registry.getSkill(node.skillName)!;
@@ -258,6 +441,11 @@ export class DagExecutor {
       resources = await this.scheduler.acquire(skill, node.id);
       callbacks?.onNodeStart?.(node.id, skill.name, resources);
 
+      // Build workdir path if pipeline mode is active
+      const nodeWorkDir = pipelineDir
+        ? path.join(pipelineDir, node.id)
+        : undefined;
+
       // Execute skill
       const result = await this.engine.execute({
         skillName: skill.name,
@@ -265,10 +453,16 @@ export class DagExecutor {
         params,
         gpuId: resources.gpuId,
         isCpuFallback: resources.isCpuFallback,
+        workDir: nodeWorkDir,
       });
 
       state.markComplete(node.id, result);
       callbacks?.onNodeComplete?.(node.id, result);
+
+      // Route files and inject params to downstream nodes (pipeline mode only)
+      if (pipelineDir && result.status === 'success') {
+        this.routeToDownstream(node, state, nodeParams, pipelineDir, result);
+      }
     } catch (error) {
       state.markFailed(node.id, error);
       callbacks?.onNodeFailed?.(node.id, error);
@@ -276,6 +470,44 @@ export class DagExecutor {
       if (resources) {
         this.scheduler.release(node.id);
       }
+    }
+  }
+
+  /**
+   * After a node completes successfully, route its output files to all
+   * dependent nodes and inject upstream results into their params.
+   */
+  private routeToDownstream(
+    completedNode: DagNode,
+    state: DagState,
+    nodeParams: Map<string, Record<string, unknown>>,
+    pipelineDir: string,
+    result: SkillRunResult,
+  ): void {
+    const dependentIds = state.getDependents(completedNode.id);
+
+    for (const depId of dependentIds) {
+      const depNode = state.getNode(depId);
+      if (!depNode) continue;
+
+      const depParams = nodeParams.get(depId) ?? {};
+      const sourceDir = path.join(pipelineDir, completedNode.id);
+      const targetDir = path.join(pipelineDir, depId);
+
+      // Route files by format
+      const filesByFormat = routeFiles(sourceDir, targetDir);
+      injectFileParams(depParams, filesByFormat);
+
+      // Inject upstream metrics as _upstream_results
+      const upstream = (depParams._upstream_results as Record<string, unknown>) ?? {};
+      upstream[completedNode.id] = {
+        metrics: result.metrics,
+        outputFiles: result.outputFiles,
+        status: result.status,
+      };
+      depParams._upstream_results = upstream;
+
+      nodeParams.set(depId, depParams);
     }
   }
 }

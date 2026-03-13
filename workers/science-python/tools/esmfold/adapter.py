@@ -149,8 +149,8 @@ class ESMFoldAdapter(BaseTool):
                         raise
 
                     # Write PDB file
-                    safe_name = seq_name.replace("/", "_").replace(" ", "_")[:50]
-                    pdb_filename = f"{safe_name}_predicted.pdb"
+                    seq_idx = len(output_files)
+                    pdb_filename = f"seq_{seq_idx}_predicted.pdb"
                     pdb_path = os.path.join(output_dir, pdb_filename)
 
                     with open(pdb_path, "w") as f:

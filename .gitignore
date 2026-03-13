@@ -46,6 +46,13 @@ projects/
 .env
 *.keys.json
 
+# --- ProtClaw local config (contains SSH credentials, target-specific paths) ---
+.protclaw/targets.yaml
+apps/orchestrator/.protclaw/
+
+# --- Claude Code ---
+.claude/
+
 # --- NanoClaw / Orchestrator runtime ---
 apps/orchestrator/store/
 apps/orchestrator/data/

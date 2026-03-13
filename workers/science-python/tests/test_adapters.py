@@ -396,15 +396,17 @@ class TestExperimentPackageAdapter:
     def test_is_tool_adapter(self):
         assert isinstance(self._get_adapter(), ToolAdapter)
 
-    def test_validate_missing_candidates(self):
+    def test_validate_no_candidates_passes(self):
+        """Candidates can be omitted at validation time (auto-constructed in execute)."""
         adapter = self._get_adapter()
-        with pytest.raises(ValueError, match="candidates"):
-            adapter.validate_input({})
+        result = adapter.validate_input({})
+        assert result["project_name"] == "ProtClaw Design"
 
-    def test_validate_missing_sequence(self):
+    def test_validate_candidates_without_sequence_passes(self):
+        """Candidates without 'sequence' field are allowed (may come from upstream)."""
         adapter = self._get_adapter()
-        with pytest.raises(ValueError, match="sequence"):
-            adapter.validate_input({"candidates": [{"name": "c1"}]})
+        result = adapter.validate_input({"candidates": [{"name": "c1"}]})
+        assert len(result["candidates"]) == 1
 
     def test_validate_valid_params(self):
         adapter = self._get_adapter()
