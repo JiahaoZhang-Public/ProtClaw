@@ -92,7 +92,7 @@ export interface DesignPlanRecord {
   id: string;
   project_id: string;
   version: number;
-  status: 'draft' | 'active' | 'completed' | 'superseded';
+  status: 'draft' | 'active' | 'completed' | 'superseded' | 'pending' | 'executing' | 'failed';
   plan: object;
   created_at: string;
 }

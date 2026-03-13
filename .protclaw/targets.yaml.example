@@ -1,0 +1,42 @@
+# ProtClaw Compute Targets Configuration
+#
+# Copy this file to .protclaw/targets.yaml and customize for your hardware.
+# Run `protclaw target init` to auto-detect local hardware.
+#
+# Template variables available in skill.yaml:
+#   ${REPOS_DIR}      → paths.repos
+#   ${MODELS_DIR}     → paths.models
+#   ${CACHE_DIR}      → paths.cache
+#   ${CUDA_WHEEL_TAG} → "cu" + cuda_version without dots (e.g. "cu121")
+
+targets:
+  # ===== Local Machine (auto-detect backend) =====
+  local:
+    type: local
+    compute:
+      backend: auto           # auto-detects: cuda > mps > cpu
+      # Uncomment and set if auto-detect is wrong:
+      # gpus: 1
+      # gpu_vram_gb: 24
+      # ram_gb: 64
+    # paths: auto-inferred to ~/.protclaw/{envs,repos,models}
+    # Override specific paths if needed:
+    # paths:
+    #   models: /data/protclaw/models
+
+  # ===== SSH GPU Server (e.g. AutoDL, Lambda, etc.) =====
+  # gpu-server:
+  #   type: ssh
+  #   ssh:
+  #     host: root@your-server.com
+  #     port: 22
+  #   compute:
+  #     backend: cuda
+  #     cuda_version: "12.1"    # REQUIRED for SSH targets
+  #     gpus: 4                 # Number of GPUs
+  #     gpu_vram_gb: 16         # VRAM per GPU in GB
+  #   # paths: auto-inferred to /root/protclaw/{envs,repos,models}
+  #   # Override if needed (e.g. AutoDL persistent storage):
+  #   # paths:
+  #   #   envs: /root/autodl-tmp/envs
+  #   #   models: /root/autodl-tmp/models

@@ -16,6 +16,7 @@ from __future__ import annotations
 import importlib
 import json
 import logging
+import os
 import sys
 import time
 import traceback
@@ -23,8 +24,8 @@ from pathlib import Path
 
 from common.adapter_protocol import ToolResult
 
-INPUT_DIR = Path("/workspace/input")
-OUTPUT_DIR = Path("/workspace/output")
+INPUT_DIR = Path(os.environ.get("PROTCLAW_INPUT_DIR", "/workspace/input"))
+OUTPUT_DIR = Path(os.environ.get("PROTCLAW_OUTPUT_DIR", "/workspace/output"))
 
 logging.basicConfig(
     level=logging.INFO,

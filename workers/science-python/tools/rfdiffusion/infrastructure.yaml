@@ -1,0 +1,60 @@
+# infrastructure.yaml — ProtClaw environment provisioning config
+# Consumed by Provisioner (TS), not by AI agents.
+# Agent-facing metadata lives in SKILL.md.
+
+environment:
+  name: protclaw-rfdiffusion
+  python: "3.10"
+  backends:
+    cuda:
+      pip:
+        - torch --index-url https://download.pytorch.org/whl/${CUDA_WHEEL_TAG}
+        - hydra-core scipy pyrsistent biopython numpy opt_einsum e3nn omegaconf
+        - "dgl>=2.0 -f https://data.dgl.ai/wheels/torch-2.1/${CUDA_WHEEL_TAG}/repo.html"
+      editable_installs:
+        - "${REPOS_DIR}/RFdiffusion"
+        - "${REPOS_DIR}/RFdiffusion/env/SE3Transformer"
+    mps:
+      pip:
+        - torch
+        - hydra-core scipy pyrsistent biopython numpy opt_einsum e3nn omegaconf
+      editable_installs:
+        - "${REPOS_DIR}/RFdiffusion"
+        - "${REPOS_DIR}/RFdiffusion/env/SE3Transformer"
+      notes: "MPS support is experimental; may fallback to CPU for some operations"
+    cpu:
+      pip:
+        - torch --index-url https://download.pytorch.org/whl/cpu
+        - hydra-core scipy pyrsistent biopython numpy opt_einsum e3nn omegaconf
+      editable_installs:
+        - "${REPOS_DIR}/RFdiffusion"
+        - "${REPOS_DIR}/RFdiffusion/env/SE3Transformer"
+      notes: "CPU mode is very slow; recommend GPU for production use"
+  patches: []
+
+repos:
+  - url: https://github.com/RosettaCommons/RFdiffusion.git
+    path: "${REPOS_DIR}/RFdiffusion"
+
+models:
+  - name: rfdiffusion-base
+    path: "${MODELS_DIR}/rfdiffusion/Base_ckpt.pt"
+    url: http://files.ipd.uw.edu/pub/RFdiffusion/6f5902ac237024bdd0c176cb93063dc4/Base_ckpt.pt
+    size_gb: 0.8
+  - name: rfdiffusion-complex
+    path: "${MODELS_DIR}/rfdiffusion/Complex_base_ckpt.pt"
+    url: http://files.ipd.uw.edu/pub/RFdiffusion/e29311f6f1bf1af907f9ef9f44b8328b/Complex_base_ckpt.pt
+    size_gb: 0.8
+
+resources:
+  gpu: preferred
+  gpu_vram_min_gb: 8
+  ram_min_gb: 16
+  estimated_runtime:
+    gpu: "5-30 min per design"
+    cpu: "2-8 hours per design"
+  cost_tier: balanced
+
+runtime_env:
+  RFDIFFUSION_DIR: "${REPOS_DIR}/RFdiffusion"
+  RFDIFFUSION_WEIGHTS: "${MODELS_DIR}/rfdiffusion"

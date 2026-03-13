@@ -10,6 +10,10 @@ import { isValidGroupFolder } from './group-folder.js';
 import { logger } from './logger.js';
 import { ProjectManager } from './project-manager.js';
 import { RegisteredGroup } from './types.js';
+import { AuditLogger } from './audit-logger.js';
+import { ExecutionDispatcher } from './execution-dispatcher.js';
+import { LearningAnalyzer } from './learning-analyzer.js';
+import { Replanner } from './replanner.js';
 
 export interface IpcDeps {
   sendMessage: (jid: string, text: string) => Promise<void>;
@@ -669,24 +673,52 @@ export function processScienceIpc(data: {
 
       case 'science:request_replan': {
         const projectId = data.projectId as string;
-        const constraints = data.constraints as object | undefined;
         if (!projectId) {
           return { success: false, error: 'Missing projectId' };
         }
-        // Mark the latest plan as superseded and create a placeholder for the new plan
-        const latestPlan = pm.getLatestPlan(projectId);
-        if (latestPlan) {
-          // We cannot directly update plan status, so we record a new plan version
-          const newPlanId = `plan-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-          pm.createPlan(newPlanId, projectId, {
-            replan: true,
-            previous_plan_id: latestPlan.id,
-            updated_constraints: constraints || {},
-          });
-          logger.info({ projectId, newPlanId }, 'Replan requested via IPC');
-          return { success: true, data: { planId: newPlanId } };
-        }
-        return { success: false, error: 'No existing plan found for project' };
+
+        // Analyze feedback and generate learning update
+        const analyzer = new LearningAnalyzer(pm);
+        const learningUpdate = analyzer.analyze(projectId);
+
+        const audit = getAuditLogger();
+        audit?.log({
+          eventType: 'learning_analyzed',
+          projectId,
+          details: {
+            updateId: learningUpdate.update_id,
+            successRate: learningUpdate.success_rate,
+            patterns: learningUpdate.observed_failure_patterns?.length ?? 0,
+            adjustments: learningUpdate.parameter_adjustments?.length ?? 0,
+          },
+        });
+
+        // Generate new plan based on learnings
+        const replanner = new Replanner(pm);
+        const replanResult = replanner.replan(projectId, learningUpdate.update_id);
+
+        audit?.log({
+          eventType: 'replan_created',
+          projectId,
+          details: {
+            newPlanId: replanResult.newPlanId,
+            newVersion: replanResult.newVersion,
+            previousPlanId: replanResult.previousPlanId,
+            changesApplied: replanResult.changesApplied,
+          },
+        });
+
+        logger.info({ projectId, newPlanId: replanResult.newPlanId, version: replanResult.newVersion }, 'Replan completed via IPC');
+        return {
+          success: true,
+          data: {
+            planId: replanResult.newPlanId,
+            version: replanResult.newVersion,
+            previousPlanId: replanResult.previousPlanId,
+            changesApplied: replanResult.changesApplied,
+            learningUpdateId: learningUpdate.update_id,
+          },
+        };
       }
 
       // --- Toolkit system IPC handlers ---
@@ -697,9 +729,17 @@ export function processScienceIpc(data: {
         if (!projectId || !planId) {
           return { success: false, error: 'Missing projectId or planId' };
         }
-        // Return immediately — execution is async. Caller polls via get_plan_status.
-        logger.info({ projectId, planId }, 'Plan execution requested via IPC');
-        return { success: true, data: { projectId, planId, status: 'accepted' } };
+
+        const dispatcher = getExecutionDispatcher();
+        if (!dispatcher) {
+          // Fallback: no dispatcher configured, return accepted stub
+          logger.info({ projectId, planId }, 'Plan execution requested via IPC (no dispatcher)');
+          return { success: true, data: { projectId, planId, status: 'accepted' } };
+        }
+
+        const { executionId } = dispatcher.dispatch(projectId, planId);
+        logger.info({ projectId, planId, executionId }, 'Plan execution dispatched via IPC');
+        return { success: true, data: { projectId, planId, executionId, status: 'dispatched' } };
       }
 
       case 'science:get_plan_status': {
@@ -766,4 +806,31 @@ export function setToolkitData(data: unknown[]): void {
 
 function getToolkitData(): unknown[] {
   return _toolkitData;
+}
+
+// --- Execution dispatcher & audit logger singletons ---
+
+let _executionDispatcher: ExecutionDispatcher | null = null;
+let _auditLogger: AuditLogger | null = null;
+
+export function setExecutionDispatcher(dispatcher: ExecutionDispatcher): void {
+  _executionDispatcher = dispatcher;
+}
+
+function getExecutionDispatcher(): ExecutionDispatcher | null {
+  return _executionDispatcher;
+}
+
+export function setAuditLogger(auditLogger: AuditLogger): void {
+  _auditLogger = auditLogger;
+}
+
+function getAuditLogger(): AuditLogger | null {
+  return _auditLogger;
+}
+
+/** @internal - for tests only. Reset all singletons. */
+export function _resetIpcSingletons(): void {
+  _executionDispatcher = null;
+  _auditLogger = null;
 }
