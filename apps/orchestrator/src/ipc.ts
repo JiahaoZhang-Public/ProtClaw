@@ -14,6 +14,10 @@ import { AuditLogger } from './audit-logger.js';
 import { ExecutionDispatcher } from './execution-dispatcher.js';
 import { LearningAnalyzer } from './learning-analyzer.js';
 import { Replanner } from './replanner.js';
+import type { ExecutionEngine, SkillRunConfig, SkillRunResult } from './dag-executor.js';
+import type { SkillRegistry } from './skill-registry.js';
+import type { ResourceScheduler } from './resource-scheduler.js';
+import { executePipeline, type PipelineContext } from './pipeline-builder.js';
 
 export interface IpcDeps {
   sendMessage: (jid: string, text: string) => Promise<void>;
@@ -161,7 +165,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
             const filePath = path.join(scienceDir, file);
             try {
               const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-              const result = processScienceIpc(data);
+              const result = await processScienceIpc(data);
               // Write result back to a response file
               const responseDir = path.join(ipcBaseDir, sourceGroup, 'science-responses');
               fs.mkdirSync(responseDir, { recursive: true });
@@ -519,10 +523,10 @@ export interface ScienceIpcResult {
   error?: string;
 }
 
-export function processScienceIpc(data: {
+export async function processScienceIpc(data: {
   type: string;
   [key: string]: unknown;
-}): ScienceIpcResult {
+}): Promise<ScienceIpcResult> {
   const pm = getProjectManager();
 
   try {
@@ -787,6 +791,81 @@ export function processScienceIpc(data: {
         return { success: true, data: toolkit };
       }
 
+      // --- Direct skill execution (agent → IPC → engine) ---
+
+      case 'science:execute_skill': {
+        const skillName = data.skillName as string;
+        const params = (data.params ?? {}) as Record<string, unknown>;
+        if (!skillName) {
+          return { success: false, error: 'Missing skillName' };
+        }
+
+        if (!_executionEngine) {
+          return { success: false, error: 'Science execution engine not initialized (no target configured?)' };
+        }
+
+        // Acquire GPU/CPU resources via scheduler
+        let gpuId = 0;
+        let isCpuFallback = false;
+        const nodeId = `ipc-${Date.now()}`;
+
+        if (_resourceScheduler && _skillRegistry) {
+          const skill = _skillRegistry.getSkill(skillName);
+          if (skill) {
+            const resources = await _resourceScheduler.acquire(skill, nodeId);
+            gpuId = resources.gpuId;
+            isCpuFallback = resources.isCpuFallback;
+          }
+        }
+
+        try {
+          const config: SkillRunConfig = { skillName, nodeId, params, gpuId, isCpuFallback };
+          const result = await _executionEngine.execute(config);
+          logger.info({ skillName, nodeId, status: result.status, duration: result.durationSeconds }, 'Skill executed via IPC');
+          return { success: true, data: result };
+        } finally {
+          if (_resourceScheduler) {
+            _resourceScheduler.release(nodeId);
+          }
+        }
+      }
+
+      case 'science:run_pipeline': {
+        const toolkit = (data.toolkit as string) || 'de-novo';
+        const params = (data.params ?? {}) as Record<string, unknown>;
+
+        if (!_executionEngine || !_skillRegistry || !_resourceScheduler) {
+          return { success: false, error: 'Science execution not fully initialized for pipeline execution' };
+        }
+
+        const ctx: PipelineContext = {
+          engine: _executionEngine,
+          registry: _skillRegistry,
+          scheduler: _resourceScheduler,
+          toolkitDir: path.resolve(process.cwd(), '../../toolkits'),
+          pipelineDir: path.resolve(process.cwd(), '../../projects/_pipelines'),
+        };
+
+        const result = await executePipeline(toolkit, params, ctx);
+        logger.info({ toolkit, status: result.status, duration: result.durationSeconds }, 'Pipeline executed via IPC');
+
+        // Convert Map to plain object for JSON serialization
+        const nodeResults: Record<string, SkillRunResult> = {};
+        for (const [k, v] of result.nodeResults) {
+          nodeResults[k] = v;
+        }
+
+        return {
+          success: true,
+          data: {
+            status: result.status,
+            durationSeconds: result.durationSeconds,
+            failedNodes: result.failedNodes,
+            nodeResults,
+          },
+        };
+      }
+
       default:
         return { success: false, error: `Unknown science IPC type: ${data.type}` };
     }
@@ -829,8 +908,29 @@ function getAuditLogger(): AuditLogger | null {
   return _auditLogger;
 }
 
+// --- ExecutionEngine, SkillRegistry, ResourceScheduler singletons (for direct skill execution) ---
+
+let _executionEngine: ExecutionEngine | null = null;
+let _skillRegistry: SkillRegistry | null = null;
+let _resourceScheduler: ResourceScheduler | null = null;
+
+export function setExecutionEngine(engine: ExecutionEngine): void {
+  _executionEngine = engine;
+}
+
+export function setSkillRegistry(registry: SkillRegistry): void {
+  _skillRegistry = registry;
+}
+
+export function setResourceScheduler(scheduler: ResourceScheduler): void {
+  _resourceScheduler = scheduler;
+}
+
 /** @internal - for tests only. Reset all singletons. */
 export function _resetIpcSingletons(): void {
   _executionDispatcher = null;
   _auditLogger = null;
+  _executionEngine = null;
+  _skillRegistry = null;
+  _resourceScheduler = null;
 }

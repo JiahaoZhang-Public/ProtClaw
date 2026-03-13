@@ -33,8 +33,28 @@ def _build_candidates_from_upstream(
 
     Reads JSON report files from input_dir/files/ if available,
     otherwise falls back to metrics in _upstream_results.
+
+    Priority order:
+      1. cluster_results.json (from candidate_cluster — already enriched)
+      2. rank_results.json (from candidate_rank — already ranked)
+      3. developability_report.json + qc_report.json (raw upstream data)
+      4. _upstream_results metrics (fallback)
     """
     candidates: list[dict[str, Any]] = []
+
+    # Try to read pre-built candidate lists from upstream (cluster or rank results)
+    for upstream_file in ("cluster_results.json", "rank_results.json"):
+        upstream_path = os.path.join(input_dir, upstream_file)
+        if os.path.isfile(upstream_path):
+            try:
+                with open(upstream_path) as f:
+                    data = json.load(f)
+                cands = data.get("candidates", [])
+                if cands:
+                    logger.info("Read %d candidates from %s", len(cands), upstream_file)
+                    return cands
+            except (json.JSONDecodeError, OSError):
+                pass
 
     # Try to read developability report for per-sequence data
     dev_report_path = os.path.join(input_dir, "developability_report.json")

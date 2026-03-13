@@ -722,6 +722,46 @@ server.tool(
   },
 );
 
+// --- Direct skill execution tools ---
+
+server.tool(
+  'execute_skill',
+  'Execute a science skill directly by name. Returns execution result with metrics and output files. Use for single-step computation (e.g., generate backbones with RFdiffusion, design sequences with ProteinMPNN, predict structure with ESMFold). The call blocks until the skill completes (may take minutes for GPU skills).',
+  {
+    skill_name: z.string().describe('Skill name (e.g., "rfdiffusion", "proteinmpnn", "esmfold", "structure-qc", "developability", "candidate-ops", "experiment-package")'),
+    params: z.string().describe('JSON string of skill parameters (e.g., \'{"contigs": "50-50", "num_designs": 1}\')'),
+  },
+  async (args) => {
+    const filename = writeScienceIpcFile({
+      type: 'science:execute_skill',
+      skillName: args.skill_name,
+      params: JSON.parse(args.params),
+    });
+    // GPU skills can take minutes — 10 minute timeout
+    const result = waitForScienceResponse(filename, 600_000);
+    return { content: [{ type: 'text' as const, text: result ? JSON.stringify(result) : `Skill ${args.skill_name} execution timed out` }] };
+  },
+);
+
+server.tool(
+  'run_pipeline',
+  'Run a full de novo protein design pipeline (all 8 steps: RFdiffusion → ProteinMPNN → ESMFold → Structure QC → Developability → Candidate Cluster → Candidate Rank → Experiment Package). Returns aggregated results for all steps. This call blocks until the entire pipeline completes.',
+  {
+    toolkit: z.string().default('de-novo').describe('Toolkit name (default: "de-novo")'),
+    params: z.string().optional().describe('JSON string of pipeline-level params (e.g., \'{"contigs": "50-50", "num_designs": 1}\')'),
+  },
+  async (args) => {
+    const filename = writeScienceIpcFile({
+      type: 'science:run_pipeline',
+      toolkit: args.toolkit,
+      params: args.params ? JSON.parse(args.params) : {},
+    });
+    // Full pipeline can take 30+ minutes
+    const result = waitForScienceResponse(filename, 1_800_000);
+    return { content: [{ type: 'text' as const, text: result ? JSON.stringify(result) : 'Pipeline execution timed out' }] };
+  },
+);
+
 // Start the stdio transport
 const transport = new StdioServerTransport();
 await server.connect(transport);

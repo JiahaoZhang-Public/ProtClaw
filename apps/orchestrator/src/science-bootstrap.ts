@@ -21,9 +21,11 @@ import { AuditLogger } from './audit-logger.js';
 import { ProjectManager } from './project-manager.js';
 import { runScienceContainer } from './science-runner.js';
 import { runSshScience } from './ssh-science-runner.js';
-import { setExecutionDispatcher, setAuditLogger } from './ipc.js';
+import { setExecutionDispatcher, setAuditLogger, setExecutionEngine, setSkillRegistry, setResourceScheduler, setToolkitData } from './ipc.js';
 import { loadTarget } from './target-loader.js';
 import { ResourceScheduler } from './resource-scheduler.js';
+import { SkillRegistry } from './skill-registry.js';
+import { createEngine } from './execution-engine.js';
 
 export interface ScienceBootstrapConfig {
   /** SQLite database instance (from better-sqlite3) */
@@ -81,6 +83,7 @@ export function bootstrapScience(config: ScienceBootstrapConfig): {
   // 3. Create supporting services
   const cache = new ScienceCache(cacheDir);
   const toolkitLoader = new ToolkitLoader(toolkitDir);
+  setToolkitData(toolkitLoader.listToolkits());
   const pm = new ProjectManager(db);
   const auditLogger = new AuditLogger(auditLogDir);
 
@@ -97,6 +100,22 @@ export function bootstrapScience(config: ScienceBootstrapConfig): {
   // 5. Wire into IPC layer
   setExecutionDispatcher(dispatcher);
   setAuditLogger(auditLogger);
+
+  // 6. Create ExecutionEngine + SkillRegistry for direct skill execution via IPC
+  const workersDir = path.resolve(process.cwd(), '../../workers/science-python');
+  const registry = new SkillRegistry();
+  registry.loadAll(path.join(workersDir, 'tools'));
+  setSkillRegistry(registry);
+
+  try {
+    const target = loadTarget(process.env.SSH_TARGET);
+    const engine = createEngine(target, registry, workersDir);
+    const scheduler = new ResourceScheduler(target);
+    setExecutionEngine(engine);
+    setResourceScheduler(scheduler);
+  } catch {
+    // No target config — direct skill execution disabled, plan execution still works
+  }
 
   return { dispatcher, auditLogger, queue };
 }
